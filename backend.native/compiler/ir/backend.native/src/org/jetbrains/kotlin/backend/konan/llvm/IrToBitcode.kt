@@ -587,11 +587,15 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         if (body == null)                                         return
 
         using(FunctionScope(declaration)) {
-            val locationInfo = LocationInfo(
+            val startLocationInfo = LocationInfo(
                     scope  = declaration.scope(),
-                    line   = declaration.line(),
-                    column = declaration.column())
-            codegen.prologue(declaration.descriptor, locationInfo)
+                    line   = declaration.startLine(),
+                    column = declaration.startColumn())
+            val endLocationInfo = LocationInfo(
+                    scope  = declaration.scope(),
+                    line   = declaration.endLine(),
+                    column = declaration.endColumn())
+            codegen.prologue(declaration.descriptor, startLocationInfo)
 
             using(VariableScope()) {
                 when (body) {
@@ -609,7 +613,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                     codegen.unreachable()
             }
 
-            codegen.epilogue(locationInfo)
+            codegen.epilogue(startLocationInfo, endLocationInfo)
         }
 
         if (context.shouldVerifyBitCode())
@@ -723,6 +727,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             return codegen.theUnitInstanceRef.llvm
         }
 
+        debugLocation(value)
         var objectPtr = getObjectInstanceStorage(value.descriptor)
         val bbCurrent = codegen.currentBlock
         val bbInit    = codegen.basicBlock("label_init")
@@ -834,6 +839,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateThrow(expression: IrThrow): LLVMValueRef {
         val exception = evaluateExpression(expression.value)
+        debugLocation(expression)
         currentCodeContext.genThrow(exception)
         return codegen.kNothingFakeValue
     }
@@ -852,6 +858,11 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         private val landingpad: LLVMBasicBlockRef by lazy {
             using(outerContext) {
                 codegen.basicBlock("landingpad") {
+                    val functionScope = currentCodeContext.functionScope()
+                    functionScope?.let{
+                        val element = (functionScope as FunctionScope).declaration ?: return@let
+                        debugLocation(element)
+                    }
                     genLandingpad()
                 }
             }
@@ -945,6 +956,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             for (catch in catches) {
                 fun genCatchBlock() {
                     using(VariableScope()) {
+                        debugLocation(catch)
                         currentCodeContext.genDeclareVariable(catch.parameter, exception)
                         evaluateExpressionAndJump(catch.result, success)
                     }
@@ -954,7 +966,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                     genCatchBlock()
                     return      // Remaining catch clauses are unreachable.
                 } else {
-                    val isInstance = genInstanceOf(exception, catch.parameter.type)
+                    val isInstance = genInstanceOf(exception, catch.parameter.type, catch)
                     val body = codegen.basicBlock("catch")
                     val nextCheck = codegen.basicBlock("catchCheck")
                     codegen.condBr(isInstance, body, nextCheck)
@@ -964,6 +976,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                     }
 
                     codegen.positionAtEnd(nextCheck)
+                    debugLocation(catch)
 
                 }
             }
@@ -1116,15 +1129,17 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun generateVariable(value: IrVariable) {
         context.log{"generateVariable               : ${ir2string(value)}"}
+        debugLocation(value)
         val result = value.initializer?.let { evaluateExpression(it) }
         val variableDescriptor = value.descriptor
+        debugLocation(value)
         val index = currentCodeContext.genDeclareVariable(variableDescriptor, result)
         if (context.shouldContainDebugInfo()) {
             val location = debugLocation(value)
             val functionScope = (currentCodeContext.functionScope() as FunctionScope).declaration?.scope() ?: return
             val file = (currentCodeContext.fileScope() as FileScope).file.file()
             val variable = codegen.vars.load(index)
-            val line = value.line()
+            val line = value.startLine()
             codegen.vars.debugInfoLocalVariableLocation(
                     functionScope = functionScope,
                     diType        = variableDescriptor.type.diType(context, codegen.llvmTargetData),
@@ -1206,7 +1221,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val srcArg        = evaluateExpression(value.argument)                         // Evaluate src expression.
         val srcObjInfoPtr = codegen.bitcast(codegen.kObjHeaderPtr, srcArg)             // Cast src to ObjInfoPtr.
         val args          = listOf(srcObjInfoPtr, dstTypeInfo)                         // Create arg list.
-        debugLocation(value)
+        debugLocation(value)                                                           // Set debug info.
         call(context.llvm.checkInstanceFunction, args)                                 // Check if dst is subclass of src.
         return srcArg
     }
@@ -1223,27 +1238,29 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val bbInstanceOf = codegen.basicBlock("instance_of_notnull")
         val bbNull       = codegen.basicBlock("instance_of_null")
 
-        val condition = codegen.icmpEq(srcArg, codegen.kNullObjHeaderPtr)
-        codegen.condBr(condition, bbNull, bbInstanceOf)
+        return debugInfo(value) {
+            val condition = codegen.icmpEq(srcArg, codegen.kNullObjHeaderPtr)
+            codegen.condBr(condition, bbNull, bbInstanceOf)
 
-        codegen.positionAtEnd(bbNull)
-        val resultNull = if (TypeUtils.isNullableType(type)) kTrue else kFalse
-        codegen.br(bbExit)
+            codegen.positionAtEnd(bbNull)
+            val resultNull = if (TypeUtils.isNullableType(type)) kTrue else kFalse
+            codegen.br(bbExit)
 
-        codegen.positionAtEnd(bbInstanceOf)
-        val resultInstanceOf = genInstanceOf(srcArg, type)
-        codegen.br(bbExit)
-        val bbInstanceOfResult = codegen.currentBlock
+            codegen.positionAtEnd(bbInstanceOf)
+            val resultInstanceOf = genInstanceOf(srcArg, type)
+            codegen.br(bbExit)
+            val bbInstanceOfResult = codegen.currentBlock
 
-        codegen.positionAtEnd(bbExit)
-        val result = codegen.phi(kBoolean)
-        codegen.addPhiIncoming(result, bbNull to resultNull, bbInstanceOfResult to resultInstanceOf)
-        return result
+            codegen.positionAtEnd(bbExit)
+            val result = codegen.phi(kBoolean)
+            codegen.addPhiIncoming(result, bbNull to resultNull, bbInstanceOfResult to resultInstanceOf)
+            result
+        }
     }
 
     //-------------------------------------------------------------------------//
 
-    private fun genInstanceOf(obj: LLVMValueRef, type: KotlinType): LLVMValueRef {
+    private fun genInstanceOf(obj: LLVMValueRef, type: KotlinType, element: IrElement? = null): LLVMValueRef {
         var dstDescriptor = TypeUtils.getClassDescriptor(type)                         // Get class descriptor for dst type.
         // Reified parameters are not yet supported.
         if (dstDescriptor == null) return kTrue                                        // Workaround for reified parameters
@@ -1252,8 +1269,10 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val srcObjInfoPtr = codegen.bitcast(codegen.kObjHeaderPtr, obj)                // Cast src to ObjInfoPtr.
         val args          = listOf(srcObjInfoPtr, dstTypeInfo)                         // Create arg list.
 
-        val result = call(context.llvm.isInstanceFunction, args)                       // Check if dst is subclass of src.
-        return LLVMBuildTrunc(codegen.builder, result, kInt1, "")!!                    // Truncate result to boolean
+        return debugInfo(element) {
+            val result = call(context.llvm.isInstanceFunction, args)                   // Check if dst is subclass of src.
+            LLVMBuildTrunc(codegen.builder, result, kInt1, "")!!                       // Truncate result to boolean
+        }
     }
 
     //-------------------------------------------------------------------------//
@@ -1267,6 +1286,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateGetField(value: IrGetField): LLVMValueRef {
         context.log{"evaluateGetField               : ${ir2string(value)}"}
+        debugLocation(value)
         if (value.descriptor.dispatchReceiverParameter != null) {
             val thisPtr = evaluateExpression(value.receiver!!)
             return debugInfo(value) {
@@ -1469,7 +1489,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                     refScope   = context.debugInfo.compilationModule as DIScopeOpaqueRef,
                     name       = clazz.descriptor.typeInfoSymbolName,
                     refFile    = file().file(),
-                    line       = clazz.line()) as DITypeOpaqueRef
+                    line       = clazz.startLine()) as DITypeOpaqueRef
         else null
         override fun classScope(): CodeContext? = this
     }
@@ -1614,20 +1634,26 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val diScope       = scope.scope()
         @Suppress("UNCHECKED_CAST")
         return codegen.debugLocation(LocationInfo(
-                line   = element.line(),
-                column = element.column(),
+                line   = element.startLine(),
+                column = element.startColumn(),
                 scope  = diScope as DIScopeOpaqueRef))
     }
 
     //-------------------------------------------------------------------------//
-    private fun IrElement.line() = file().fileEntry.line(this.startOffset)
+    private fun IrElement.startLine() = file().fileEntry.line(this.startOffset)
 
     //-------------------------------------------------------------------------//
-    private fun IrElement.column() = file().fileEntry.column(this.startOffset)
+    private fun IrElement.startColumn() = file().fileEntry.column(this.startOffset)
 
     //-------------------------------------------------------------------------//
-    private inline fun <T> debugInfo(element: IrElement, body:() -> T): T {
-        debugLocation(element)
+    private fun IrElement.endLine() = file().fileEntry.line(this.endOffset)
+
+    //-------------------------------------------------------------------------//
+    private fun IrElement.endColumn() = file().fileEntry.column(this.endOffset)
+
+    //-------------------------------------------------------------------------//
+    private inline fun <T> debugInfo(element: IrElement?, body:() -> T): T {
+        element?.let{debugLocation(element)}
         val result = body()
         codegen.resetDebugLocation()
         return result
@@ -1646,7 +1672,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                     scope = context.debugInfo.compilationModule as DIScopeOpaqueRef,
                     name = declaration.descriptor.typeInfoSymbolName,
                     file = file().file(),
-                    lineNumber = declaration.line(),
+                    lineNumber = declaration.startLine(),
                     sizeInBits = 64 /* TODO */,
                     alignInBits = 4 /* TODO */,
                     derivedFrom = null,
@@ -1672,7 +1698,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                 refScope     = scope.scope as DIScopeOpaqueRef,
                 name         = expression.descriptor.symbolName,
                 file         = irFile.file(),
-                lineNum      = expression.line(),
+                lineNum      = expression.startLine(),
                 sizeInBits   = sizeInBits,
                 alignInBits  = alignInBits,
                 offsetInBits = scope.offsetInBits,
@@ -1705,7 +1731,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                         name         = descriptor.name.asString(),
                         linkageName  = linkageName,
                         file         = file().file(),
-                        lineNo       = line(),
+                        lineNo       = startLine(),
                         type         = subroutineType,
                         //TODO: need more investigations.
                         isLocal      = 0,
@@ -1865,22 +1891,24 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     private fun evaluateConstructorCall(callee: IrCall, args: List<LLVMValueRef>): LLVMValueRef {
         context.log{"evaluateConstructorCall        : ${ir2string(callee)}"}
         memScoped {
-            val constructedClass = (callee.descriptor as ConstructorDescriptor).constructedClass
-            val thisValue = if (constructedClass.isArray) {
-                assert(args.size >= 1 && args[0].type == int32Type)
-                codegen.allocArray(codegen.typeInfoValue(constructedClass), args[0],
-                        resultLifetime(callee))
-            } else if (constructedClass == context.builtIns.string) {
-                // TODO: consider returning the empty string literal instead.
-                assert(args.size == 0)
-                codegen.allocArray(codegen.typeInfoValue(constructedClass), count = kImmZero,
-                        lifetime = resultLifetime(callee))
-            } else {
-                codegen.allocInstance(codegen.typeInfoValue(constructedClass), resultLifetime(callee))
+            return debugInfo(callee) {
+                val constructedClass = (callee.descriptor as ConstructorDescriptor).constructedClass
+                val thisValue = if (constructedClass.isArray) {
+                    assert(args.size >= 1 && args[0].type == int32Type)
+                    codegen.allocArray(codegen.typeInfoValue(constructedClass), args[0],
+                            resultLifetime(callee))
+                } else if (constructedClass == context.builtIns.string) {
+                    // TODO: consider returning the empty string literal instead.
+                    assert(args.size == 0)
+                    codegen.allocArray(codegen.typeInfoValue(constructedClass), count = kImmZero,
+                            lifetime = resultLifetime(callee))
+                } else {
+                    codegen.allocInstance(codegen.typeInfoValue(constructedClass), resultLifetime(callee))
+                }
+                evaluateSimpleFunctionCall(callee.descriptor as FunctionDescriptor,
+                        listOf(thisValue) + args, Lifetime.IRRELEVANT /* constructor doesn't return anything */)
+                thisValue
             }
-            evaluateSimpleFunctionCall(callee.descriptor as FunctionDescriptor,
-                    listOf(thisValue) + args, Lifetime.IRRELEVANT /* constructor doesn't return anything */)
-            return thisValue
         }
     }
 

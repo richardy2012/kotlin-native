@@ -76,9 +76,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         epilogueBb = LLVMAppendBasicBlock(function, "epilogue")
         cleanupLandingpad = LLVMAppendBasicBlock(function, "cleanup_landingpad")!!
         positionAtEnd(localsInitBb!!)
-        locationInfo?.let {
-            debugLocation(it)
-        }
+        locationInfo?.let(this::debugLocation)
         slotsPhi = phi(kObjHeaderPtrPtr)
         // First slot can be assigned to keep pointer to frame local arena.
         slotCount = 1
@@ -89,7 +87,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         positionAtEnd(entryBb!!)
     }
 
-    fun epilogue(locationInfo: LocationInfo? = null) {
+    fun epilogue(startLocationInfo: LocationInfo? = null, endLocationInfo: LocationInfo? = null) {
         appendingTo(prologueBb!!) {
             val slots = if (needSlots)
                 LLVMBuildArrayAlloca(builder, kObjHeaderPtr, Int32(slotCount).llvm, "")!!
@@ -100,9 +98,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                 val slotsMem = bitcast(kInt8Ptr, slots)
                 val pointerSize = LLVMABISizeOfType(llvmTargetData, kObjHeaderPtr).toInt()
                 val alignment = LLVMABIAlignmentOfType(llvmTargetData, kObjHeaderPtr)
-                locationInfo?.let {
-                    debugLocation(it)
-                }
+                startLocationInfo?.let(this::debugLocation)
                 call(context.llvm.memsetFunction,
                         listOf(slotsMem, Int8(0).llvm,
                                 Int32(slotCount * pointerSize).llvm, Int32(alignment).llvm,
@@ -119,11 +115,13 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         appendingTo(epilogueBb!!) {
             when {
                returnType == voidType -> {
+                   endLocationInfo?.let(this::debugLocation)
                    releaseVars()
                    assert(returnSlot == null)
                    LLVMBuildRetVoid(builder)
                }
                returns.size > 0 -> {
+                    endLocationInfo?.let(this::debugLocation)
                     val returnPhi = phi(returnType!!)
                     addPhiIncoming(returnPhi, *returns.toList().toTypedArray())
                     if (returnSlot != null) {
@@ -138,6 +136,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         }
 
         appendingTo(cleanupLandingpad!!) {
+            endLocationInfo?.let(this::debugLocation)
             val landingpad = gxxLandingpad(numClauses = 0)
             LLVMSetCleanup(landingpad, 1)
             releaseVars()
