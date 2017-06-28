@@ -327,38 +327,35 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     fun createInitBody(initName: String): LLVMValueRef {
         val initFunction = LLVMAddFunction(context.llvmModule, initName, kInitFuncType)!!    // create LLVM function
-        codegen.prologue(initFunction, voidType)
-        using(FunctionScope(initFunction)) {
-            val bbInit = codegen.basicBlock("init")
-            val bbDeinit = codegen.basicBlock("deinit")
-            codegen.condBr(codegen.icmpEq(LLVMGetParam(initFunction, 0)!!, kImmZero), bbDeinit, bbInit)
+        codegen.function(initFunction) {
+            using(FunctionScope(initFunction)) {
+                val bbInit = codegen.basicBlock("init")
+                val bbDeinit = codegen.basicBlock("deinit")
+                codegen.condBr(codegen.icmpEq(LLVMGetParam(initFunction, 0)!!, kImmZero), bbDeinit, bbInit)
 
-            codegen.appendingTo(bbDeinit) {
-                context.llvm.fileInitializers.forEach {
-                    val irField = it as IrField
-                    val descriptor = irField.descriptor
-                    if (descriptor.type.isValueType())
-                        return@forEach // Is not a subject for memory management.
-                    val globalPtr = context.llvmDeclarations.forStaticField(descriptor).storage
-                    codegen.storeAnyGlobal(codegen.kNullObjHeaderPtr, globalPtr)
+                codegen.appendingTo(bbDeinit) {
+                    context.llvm.fileInitializers.forEach {
+                        val irField = it as IrField
+                        val descriptor = irField.descriptor
+                        if (descriptor.type.isValueType())
+                            return@forEach // Is not a subject for memory management.
+                        val globalPtr = context.llvmDeclarations.forStaticField(descriptor).storage
+                        codegen.storeAnyGlobal(codegen.kNullObjHeaderPtr, globalPtr)
+                    }
+                    objects.forEach { codegen.storeAnyGlobal(codegen.kNullObjHeaderPtr, it) }
                 }
-                objects.forEach { codegen.storeAnyGlobal(codegen.kNullObjHeaderPtr, it) }
-                codegen.ret(null)
-            }
 
-            codegen.appendingTo(bbInit) {
-                context.llvm.fileInitializers.forEach {
-                    val irField = it as IrField
-                    val descriptor = irField.descriptor
-                    val initialization = evaluateExpression(irField.initializer!!.expression)
-                    val globalPtr = context.llvmDeclarations.forStaticField(descriptor).storage
-                    codegen.storeAnyGlobal(initialization, globalPtr)
+                codegen.appendingTo(bbInit) {
+                    context.llvm.fileInitializers.forEach {
+                        val irField = it as IrField
+                        val descriptor = irField.descriptor
+                        val initialization = evaluateExpression(irField.initializer!!.expression)
+                        val globalPtr = context.llvmDeclarations.forStaticField(descriptor).storage
+                        codegen.storeAnyGlobal(initialization, globalPtr)
+                    }
                 }
-                codegen.ret(null)
             }
         }
-        codegen.epilogue()
-
         return initFunction
     }
 
@@ -376,11 +373,9 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     fun createInitCtor(ctorName: String, initNodePtr: LLVMValueRef) {
         val ctorFunction = LLVMAddFunction(context.llvmModule, ctorName, kVoidFuncType)!!   // Create constructor function.
-        codegen.prologue(ctorFunction, voidType)
-        codegen.call(context.llvm.appendToInitalizersTail, listOf(initNodePtr))             // Add node to the tail of initializers list.
-        codegen.ret(null)
-        codegen.epilogue()
-
+        codegen.function(ctorFunction) {
+            codegen.call(context.llvm.appendToInitalizersTail, listOf(initNodePtr))             // Add node to the tail of initializers list.
+        }
         context.llvm.staticInitializers.add(ctorFunction)                                   // Push newly created constructor in staticInitializers list.
     }
 
@@ -481,20 +476,20 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     private inner class VariableScope : InnerScopeImpl() {
 
         override fun genDeclareVariable(descriptor: VariableDescriptor, value: LLVMValueRef?): Int {
-            return codegen.vars.createVariable(descriptor, value)
+            return codegen.vars!!.createVariable(descriptor, value)
         }
 
         override fun getDeclaredVariable(descriptor: VariableDescriptor): Int {
-            val index = codegen.vars.indexOf(descriptor)
+            val index = codegen.vars!!.indexOf(descriptor)
             return if (index < 0) super.getDeclaredVariable(descriptor) else return index
         }
 
         override fun genGetValue(descriptor: ValueDescriptor): LLVMValueRef {
-            val index = codegen.vars.indexOf(descriptor)
+            val index = codegen.vars!!.indexOf(descriptor)
             if (index < 0) {
                 return super.genGetValue(descriptor)
             } else {
-                return codegen.vars.load(index)
+                return codegen.vars!!.load(index)
             }
         }
     }
@@ -510,17 +505,17 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
         init {
             parameters.map { (descriptor, value) ->
-                codegen.vars.createImmutable(descriptor, value)
+                codegen.vars!!.createImmutable(descriptor, value)
             }
 
         }
 
         override fun genGetValue(descriptor: ValueDescriptor): LLVMValueRef {
-            val index = codegen.vars.indexOf(descriptor)
+            val index = codegen.vars!!.indexOf(descriptor)
             if (index < 0) {
                 return super.genGetValue(descriptor)
             } else {
-                return codegen.vars.load(index)
+                return codegen.vars!!.load(index)
             }
         }
     }
@@ -586,34 +581,26 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         if (declaration.descriptor.isExternal)                    return
         if (body == null)                                         return
 
-        using(FunctionScope(declaration)) {
-            val startLocationInfo = LocationInfo(
-                    scope  = declaration.scope(),
-                    line   = declaration.startLine(),
-                    column = declaration.startColumn())
-            val endLocationInfo = LocationInfo(
-                    scope  = declaration.scope(),
-                    line   = declaration.endLine(),
-                    column = declaration.endColumn())
-            debugLocation(declaration)
-            codegen.prologue(declaration.descriptor)
-
-            using(VariableScope()) {
-                when (body) {
-                    is IrBlockBody      -> body.statements.forEach { generateStatement(it) }
-                    is IrExpressionBody -> generateStatement(body.expression)
-                    is IrSyntheticBody  -> throw AssertionError("Synthetic body ${body.kind} has not been lowered")
-                    else -> TODO(ir2string(body))
+        val startLocationInfo = LocationInfo(
+                scope  = declaration.scope(),
+                line   = declaration.startLine(),
+                column = declaration.startColumn())
+        val endLocationInfo = LocationInfo(
+                scope  = declaration.scope(),
+                line   = declaration.endLine(),
+                column = declaration.endColumn())
+        debugLocation(declaration)
+        codegen.function(declaration.descriptor) {
+            using(FunctionScope(declaration)) {
+                using(VariableScope()) {
+                    when (body) {
+                        is IrBlockBody -> body.statements.forEach { generateStatement(it) }
+                        is IrExpressionBody -> generateStatement(body.expression)
+                        is IrSyntheticBody -> throw AssertionError("Synthetic body ${body.kind} has not been lowered")
+                        else -> TODO(ir2string(body))
+                    }
                 }
             }
-            if (!codegen.isAfterTerminator()) {
-                if (codegen.returnType == voidType)
-                    codegen.ret(null)
-                else
-                    codegen.unreachable()
-            }
-
-            codegen.epilogue()
         }
 
         if (context.shouldVerifyBitCode())
@@ -1116,7 +1103,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val result = evaluateExpression(value.value)
         val variable = currentCodeContext.getDeclaredVariable(value.descriptor)
         debugLocation(value)
-        codegen.vars.store(result, variable)
+        codegen.vars!!.store(result, variable)
         assert(value.type.isUnit())
         return codegen.theUnitInstanceRef.llvm
     }
@@ -1134,9 +1121,9 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             val location = debugLocation(value)
             val functionScope = (currentCodeContext.functionScope() as FunctionScope).declaration?.scope() ?: return
             val file = (currentCodeContext.fileScope() as FileScope).file.file()
-            val variable = codegen.vars.load(index)
+            val variable = codegen.vars!!.load(index)
             val line = value.startLine()
-            codegen.vars.debugInfoLocalVariableLocation(
+            codegen.vars!!.debugInfoLocalVariableLocation(
                     functionScope = functionScope,
                     diType        = variableDescriptor.type.diType(context, codegen.llvmTargetData),
                     name          = variableDescriptor.name,
@@ -2116,18 +2103,15 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         assert(LLVMCountParams(entryPoint) == 1)
 
         val selector = LLVMAddFunction(context.llvmModule, selectorName, entryPointType)!!
-        codegen.prologue(selector, voidType)
-
-        // Note, that 'parameter' is an object reference, and as such, shall
-        // be accounted for in the rootset. However, current object management
-        // scheme for arguments guarantees, that reference is being held in C++
-        // launcher, so we could optimize out creating slot for 'parameter' in
-        // this function.
-        val parameter = LLVMGetParam(selector, 0)!!
-        codegen.callAtFunctionScope(entryPoint, listOf(parameter), Lifetime.IRRELEVANT)
-
-        codegen.ret(null)
-        codegen.epilogue()
+        codegen.function(selector) {
+            // Note, that 'parameter' is an object reference, and as such, shall
+            // be accounted for in the rootset. However, current object management
+            // scheme for arguments guarantees, that reference is being held in C++
+            // launcher, so we could optimize out creating slot for 'parameter' in
+            // this function.
+            val parameter = LLVMGetParam(selector, 0)!!
+            codegen.callAtFunctionScope(entryPoint, listOf(parameter), Lifetime.IRRELEVANT)
+        }
         return selector
     }
 
