@@ -43,11 +43,11 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
     val intPtrType = LLVMIntPtrType(llvmTargetData)!!
     private val immOneIntPtrType = LLVMConstInt(intPtrType, 1, 1)!!
 
-    fun prologue(descriptor: FunctionDescriptor, locationInfo: LocationInfo? = null) {
+    fun prologue(descriptor: FunctionDescriptor) {
         val llvmFunction = llvmFunction(descriptor)
 
         prologue(llvmFunction,
-                LLVMGetReturnType(getLlvmFunctionType(descriptor))!!, locationInfo)
+                LLVMGetReturnType(getLlvmFunctionType(descriptor))!!)
 
         if (!descriptor.isExported()) {
             LLVMSetLinkage(llvmFunction, LLVMLinkage.LLVMInternalLinkage)
@@ -60,7 +60,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         functionDescriptor = descriptor
     }
 
-    fun prologue(function:LLVMValueRef, returnType:LLVMTypeRef, locationInfo: LocationInfo? = null) {
+    fun prologue(function: LLVMValueRef, returnType: LLVMTypeRef) {
         assert(returns.size == 0)
         assert(this.function != function)
 
@@ -76,7 +76,6 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         epilogueBb = LLVMAppendBasicBlock(function, "epilogue")
         cleanupLandingpad = LLVMAppendBasicBlock(function, "cleanup_landingpad")!!
         positionAtEnd(localsInitBb!!)
-        locationInfo?.let(this::debugLocation)
         slotsPhi = phi(kObjHeaderPtrPtr)
         // First slot can be assigned to keep pointer to frame local arena.
         slotCount = 1
@@ -87,7 +86,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         positionAtEnd(entryBb!!)
     }
 
-    fun epilogue(startLocationInfo: LocationInfo? = null, endLocationInfo: LocationInfo? = null) {
+    fun epilogue() {
         appendingTo(prologueBb!!) {
             val slots = if (needSlots)
                 LLVMBuildArrayAlloca(builder, kObjHeaderPtr, Int32(slotCount).llvm, "")!!
@@ -98,7 +97,6 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                 val slotsMem = bitcast(kInt8Ptr, slots)
                 val pointerSize = LLVMABISizeOfType(llvmTargetData, kObjHeaderPtr).toInt()
                 val alignment = LLVMABIAlignmentOfType(llvmTargetData, kObjHeaderPtr)
-                startLocationInfo?.let(this::debugLocation)
                 call(context.llvm.memsetFunction,
                         listOf(slotsMem, Int8(0).llvm,
                                 Int32(slotCount * pointerSize).llvm, Int32(alignment).llvm,
@@ -115,13 +113,11 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         appendingTo(epilogueBb!!) {
             when {
                returnType == voidType -> {
-                   endLocationInfo?.let(this::debugLocation)
                    releaseVars()
                    assert(returnSlot == null)
                    LLVMBuildRetVoid(builder)
                }
                returns.size > 0 -> {
-                    endLocationInfo?.let(this::debugLocation)
                     val returnPhi = phi(returnType!!)
                     addPhiIncoming(returnPhi, *returns.toList().toTypedArray())
                     if (returnSlot != null) {
@@ -136,7 +132,6 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         }
 
         appendingTo(cleanupLandingpad!!) {
-            endLocationInfo?.let(this::debugLocation)
             val landingpad = gxxLandingpad(numClauses = 0)
             LLVMSetCleanup(landingpad, 1)
             releaseVars()
@@ -473,6 +468,21 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         fun dispose() {
             LLVMDisposeBuilder(builder)
         }
+
+        fun  debugLocation(locationInfo: LocationInfo):DILocationRef? {
+            if (!context.shouldContainDebugInfo()) return null
+            assert(!isAfterTerminator)
+            return LLVMBuilderSetDebugLocation(
+                    builder,
+                    locationInfo.line,
+                    locationInfo.column,
+                    locationInfo.scope)
+        }
+
+        fun resetDebugLocation() {
+            if (!context.shouldContainDebugInfo()) return
+            LLVMBuilderResetDebugLocation(builder)
+        }
     }
 
     private var currentPositionHolder: PositionHolder = PositionHolder()
@@ -515,19 +525,8 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
     fun  llvmFunction(function: FunctionDescriptor): LLVMValueRef = function.llvmFunction
 
-    internal fun resetDebugLocation() {
-        if (!context.shouldContainDebugInfo()) return
-        LLVMBuilderResetDebugLocation(builder)
-    }
-
-    internal fun debugLocation(locationInfo: LocationInfo):DILocationRef? {
-        if (!context.shouldContainDebugInfo()) return null
-        return LLVMBuilderSetDebugLocation(
-                builder,
-                locationInfo.line,
-                locationInfo.column,
-                locationInfo.scope)
-    }
+    internal fun debugLocation(locationInfo: LocationInfo):DILocationRef? =
+        currentPositionHolder.debugLocation(locationInfo)
 
 }
 
