@@ -444,7 +444,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
     internal class FunctionGenerationContext(override val context:Context, val function: LLVMValueRef, val codegen:CodeGenerator):ContextUtils {
         val basicBlockToLastLocation = mutableMapOf<LLVMBasicBlockRef, LocationInfo>()
-        var returnType: LLVMTypeRef? = LLVMGetReturnType(LLVMTypeOf(function))
+        var returnType: LLVMTypeRef? = LLVMGetReturnType(getFunctionType(function))
         val returns: MutableMap<LLVMBasicBlockRef, LLVMValueRef> = mutableMapOf()
         // TODO: remove, to make CodeGenerator descriptor-agnostic.
         var constructedClass: ClassDescriptor? = null
