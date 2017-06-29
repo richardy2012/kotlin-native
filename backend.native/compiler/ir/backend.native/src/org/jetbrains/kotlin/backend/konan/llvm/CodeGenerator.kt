@@ -190,7 +190,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                 throw IllegalArgumentException(message)
             }
 
-            val success = basicBlock("call_success")
+            val success = basicBlock("call_success", currentFunctionContext?.basicBlockToLastLocation?.get(currentBlock))
             val result = LLVMBuildInvoke(builder, llvmFunction, rargs, args.size, success, landingpad, "")!!
             positionAtEnd(success)
             return result
@@ -235,9 +235,12 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
     }
     fun countParams(fn: FunctionDescriptor) = LLVMCountParams(fn.llvmFunction)
 
-    fun basicBlock(name: String = "label_"): LLVMBasicBlockRef {
+    fun basicBlock(name: String = "label_", locationInfo: LocationInfo?): LLVMBasicBlockRef {
         val currentBlock = this.currentBlock
         val result = LLVMInsertBasicBlock(currentBlock, name)!!
+        locationInfo?.let {
+            currentFunctionContext?.basicBlockToLastLocation?.put(result, locationInfo)
+        }
         LLVMMoveBasicBlockAfter(result, currentBlock)
         return result
     }
@@ -316,7 +319,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
         fun getBuilder(): LLVMBuilderRef {
             if (isAfterTerminator) {
-                positionAtEnd(basicBlock("unreachable"))
+                positionAtEnd(basicBlock("unreachable", null))
             }
 
             return builder
