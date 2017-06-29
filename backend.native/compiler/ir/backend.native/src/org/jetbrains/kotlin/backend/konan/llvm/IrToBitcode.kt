@@ -590,7 +590,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                 line   = declaration.endLine(),
                 column = declaration.endColumn())
         debugLocation(declaration)
-        codegen.function(declaration.descriptor) {
+        codegen.function(declaration.descriptor, startLocationInfo, endLocationInfo) {
             using(FunctionScope(declaration)) {
                 using(VariableScope()) {
                     when (body) {

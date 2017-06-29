@@ -337,6 +337,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
         fun positionAtEnd(block: LLVMBasicBlockRef) {
             LLVMPositionBuilderAtEnd(builder, block)
+            currentFunctionContext?.apply { basicBlockToLastLocation[block]?.let(this@PositionHolder::debugLocation) }
             val lastInstr = LLVMGetLastInstruction(block)
             isAfterTerminator = lastInstr != null && (LLVMIsATerminatorInst(lastInstr) != null)
         }
@@ -401,13 +402,23 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
     fun  llvmFunction(function: FunctionDescriptor): LLVMValueRef = function.llvmFunction
 
-    internal fun debugLocation(locationInfo: LocationInfo):DILocationRef? =
-        currentPositionHolder.debugLocation(locationInfo)
+    internal fun debugLocation(locationInfo: LocationInfo):DILocationRef? {
+        currentFunctionContext?.let { it.basicBlockToLastLocation[currentBlock] = locationInfo }
+        return currentPositionHolder.debugLocation(locationInfo)
+    }
 
-    inline fun<R> function(descriptor: FunctionDescriptor, code:CodeGenerator.() -> R) {
+    inline fun<R> function(descriptor: FunctionDescriptor,
+                           startLocation: LocationInfo? = null,
+                           endLocation: LocationInfo? = null,
+                           code:CodeGenerator.() -> R) {
         val llvmFunction = llvmFunction(descriptor)
 
-        currentFunctionContext = FunctionGenerationContext(this.context, llvmFunction, this)
+        currentFunctionContext = FunctionGenerationContext(
+                this.context,
+                llvmFunction,
+                this,
+                startLocation,
+                endLocation)
         if (!descriptor.isExported()) {
             LLVMSetLinkage(llvmFunction, LLVMLinkage.LLVMInternalLinkage)
             // (Cannot do this before the function body is created).
@@ -442,13 +453,17 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         currentFunctionContext = null
     }
 
-    internal class FunctionGenerationContext(override val context:Context, val function: LLVMValueRef, val codegen:CodeGenerator):ContextUtils {
+    internal class FunctionGenerationContext(override val context:Context,
+                                             val function: LLVMValueRef,
+                                             val codegen:CodeGenerator,
+                                             val startLocation:LocationInfo? = null,
+                                             val endLocation:LocationInfo? = null):ContextUtils {
         val basicBlockToLastLocation = mutableMapOf<LLVMBasicBlockRef, LocationInfo>()
         var returnType: LLVMTypeRef? = LLVMGetReturnType(getFunctionType(function))
         val returns: MutableMap<LLVMBasicBlockRef, LLVMValueRef> = mutableMapOf()
         // TODO: remove, to make CodeGenerator descriptor-agnostic.
         var constructedClass: ClassDescriptor? = null
-        val vars = VariableManager(codegen)
+        val vars = VariableManager(this.codegen)
         var functionDescriptor: FunctionDescriptor? = null
         internal var returnSlot: LLVMValueRef? = null
         internal var slotsPhi: LLVMValueRef? = null
@@ -464,7 +479,17 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
         fun basicBlock(nameBb:String = "") = LLVMAppendBasicBlock(function, nameBb)
 
-        fun prologue() {
+        fun init() {
+            startLocation?.let{
+                basicBlockToLastLocation[prologueBb!!] = it
+                basicBlockToLastLocation[entryBb!!] = it
+            }
+            endLocation?.let{
+                basicBlockToLastLocation[epilogueBb!!] = it
+            }
+        }
+
+        internal fun prologue() {
             assert(returns.size == 0)
             assert(this.function != function)
 
@@ -482,7 +507,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
             codegen.positionAtEnd(entryBb!!)
         }
 
-        fun epilogue() {
+        internal fun epilogue() {
             codegen.appendingTo(prologueBb!!) {
                 val slots = if (needSlots)
                     LLVMBuildArrayAlloca(builder, kObjHeaderPtr, Int32(slotCount).llvm, "")!!
