@@ -488,7 +488,6 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
         internal fun prologue() {
             assert(returns.size == 0)
-            assert(this.function != function)
 
             if (isObjectType(returnType!!)) {
                 this.returnSlot = LLVMGetParam(function, numParameters(function.type) - 1)
