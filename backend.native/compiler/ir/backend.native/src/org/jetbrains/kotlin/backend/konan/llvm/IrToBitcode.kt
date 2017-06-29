@@ -343,6 +343,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                         codegen.storeAnyGlobal(codegen.kNullObjHeaderPtr, globalPtr)
                     }
                     objects.forEach { codegen.storeAnyGlobal(codegen.kNullObjHeaderPtr, it) }
+                    codegen.ret(null)
                 }
 
                 codegen.appendingTo(bbInit) {
@@ -353,6 +354,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                         val globalPtr = context.llvmDeclarations.forStaticField(descriptor).storage
                         codegen.storeAnyGlobal(initialization, globalPtr)
                     }
+                    codegen.ret(null)
                 }
             }
         }

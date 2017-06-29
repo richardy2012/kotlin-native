@@ -414,7 +414,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         val llvmFunction = llvmFunction(descriptor)
 
         currentFunctionContext = FunctionGenerationContext(
-                this.context,
+                context,
                 llvmFunction,
                 this,
                 startLocation,
@@ -425,22 +425,17 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         }
 
         currentFunctionContext!!.functionDescriptor = descriptor
-        currentFunctionContext!!.prologue()
-        code()
-        if (!isAfterTerminator()) {
-            if (currentFunctionContext!!.returnType == voidType)
-                ret(null)
-            else
-                unreachable()
-        }
-        currentFunctionContext!!.epilogue()
-        currentFunctionContext = null
+        generateBody(code)
     }
+
 
     internal inline fun<R> function(function: LLVMValueRef, code:CodeGenerator.() -> R) {
 
         currentFunctionContext = FunctionGenerationContext(this.context, function, this)
+        generateBody(code)
+    }
 
+    inline private fun <R> CodeGenerator.generateBody(code: CodeGenerator.() -> R) {
         currentFunctionContext!!.prologue()
         code()
         if (!isAfterTerminator()) {
@@ -450,6 +445,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                 unreachable()
         }
         currentFunctionContext!!.epilogue()
+        currentPositionHolder.resetDebugLocation()
         currentFunctionContext = null
     }
 
@@ -483,6 +479,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
             startLocation?.let{
                 basicBlockToLastLocation[prologueBb!!] = it
                 basicBlockToLastLocation[entryBb!!] = it
+                basicBlockToLastLocation[localsInitBb!!] = it
             }
             endLocation?.let{
                 basicBlockToLastLocation[epilogueBb!!] = it
