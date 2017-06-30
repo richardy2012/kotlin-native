@@ -351,7 +351,6 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
         fun  debugLocation(locationInfo: LocationInfo):DILocationRef? {
             if (!context.shouldContainDebugInfo()) return null
-            assert(!isAfterTerminator)
             return LLVMBuilderSetDebugLocation(
                     builder,
                     locationInfo.line,
@@ -406,7 +405,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
     fun  llvmFunction(function: FunctionDescriptor): LLVMValueRef = function.llvmFunction
 
     internal fun debugLocation(locationInfo: LocationInfo):DILocationRef? {
-        currentFunctionContext?.let { it.basicBlockToLastLocation[currentBlock] = locationInfo }
+        currentFunctionContext?.basicBlockToLastLocation?.put(currentBlock, locationInfo)
         return currentPositionHolder.debugLocation(locationInfo)
     }
 
@@ -470,27 +469,28 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         internal var localAllocs = 0
         internal var arenaSlot: LLVMValueRef? = null
 
-        internal var prologueBb = basicBlock("prologue")
-        internal var localsInitBb = basicBlock("locals_init")
-        internal var entryBb = basicBlock("entry")
-        internal var epilogueBb = basicBlock("epilogue")
-        internal var cleanupLandingpad = basicBlock("cleanup_landingpad")
+        internal val prologueBb = basicBlock("prologue")!!
+        internal val localsInitBb = basicBlock("locals_init")!!
+        internal val entryBb = basicBlock("entry")!!
+        internal val epilogueBb = basicBlock("epilogue")!!
+        internal val cleanupLandingpad = basicBlock("cleanup_landingpad")!!
 
         fun basicBlock(nameBb:String = "") = LLVMAppendBasicBlock(function, nameBb)
 
-        fun init() {
+        init {
             startLocation?.let{
-                basicBlockToLastLocation[prologueBb!!] = it
-                basicBlockToLastLocation[entryBb!!] = it
-                basicBlockToLastLocation[localsInitBb!!] = it
+                basicBlockToLastLocation.put(prologueBb, it)
+                basicBlockToLastLocation.put(entryBb, it)
+                basicBlockToLastLocation.put(localsInitBb, it)
+                basicBlockToLastLocation.put(cleanupLandingpad, it)
             }
             endLocation?.let{
-                basicBlockToLastLocation[epilogueBb!!] = it
+                basicBlockToLastLocation.put(epilogueBb, it)
             }
         }
 
         internal fun prologue() {
-            assert(returns.size == 0)
+            assert(returns.isEmpty())
 
             if (isObjectType(returnType!!)) {
                 this.returnSlot = LLVMGetParam(function, numParameters(function.type) - 1)
@@ -503,11 +503,11 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
             // Is removed by DCE trivially, if not needed.
             arenaSlot = codegen.intToPtr(
                     codegen.or(codegen.ptrToInt(slotsPhi, codegen.intPtrType), codegen.immOneIntPtrType), kObjHeaderPtrPtr)
-            codegen.positionAtEnd(entryBb!!)
+            codegen.positionAtEnd(entryBb)
         }
 
         internal fun epilogue() {
-            codegen.appendingTo(prologueBb!!) {
+            codegen.appendingTo(prologueBb) {
                 val slots = if (needSlots)
                     LLVMBuildArrayAlloca(builder, kObjHeaderPtr, Int32(slotCount).llvm, "")!!
                 else
@@ -523,21 +523,21 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                                     Int1(0).llvm))
                 }
                 addPhiIncoming(slotsPhi!!, prologueBb!! to slots)
-                br(localsInitBb!!)
+                br(localsInitBb)
             }
 
-            codegen.appendingTo(localsInitBb!!) {
-                codegen.br(entryBb!!)
+            codegen.appendingTo(localsInitBb) {
+                codegen.br(entryBb)
             }
 
-            codegen.appendingTo(epilogueBb!!) {
+            codegen.appendingTo(epilogueBb) {
                 when {
                     returnType == voidType -> {
                         releaseVars()
                         assert(returnSlot == null)
                         LLVMBuildRetVoid(builder)
                     }
-                    returns.size > 0 -> {
+                    returns.isNotEmpty() -> {
                         val returnPhi = phi(returnType!!)
                         addPhiIncoming(returnPhi, *returns.toList().toTypedArray())
                         if (returnSlot != null) {
@@ -551,7 +551,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                 }
             }
 
-            codegen.appendingTo(cleanupLandingpad!!) {
+            codegen.appendingTo(cleanupLandingpad) {
                 val landingpad = gxxLandingpad(numClauses = 0)
                 LLVMSetCleanup(landingpad, 1)
                 releaseVars()
