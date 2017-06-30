@@ -235,15 +235,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
     }
     fun countParams(fn: FunctionDescriptor) = LLVMCountParams(fn.llvmFunction)
 
-    fun basicBlock(name: String = "label_", locationInfo: LocationInfo?): LLVMBasicBlockRef {
-        val currentBlock = this.currentBlock
-        val result = LLVMInsertBasicBlock(currentBlock, name)!!
-        locationInfo?.let {
-            currentFunctionContext?.basicBlockToLastLocation?.put(result, locationInfo)
-        }
-        LLVMMoveBasicBlockAfter(result, currentBlock)
-        return result
-    }
+    fun basicBlock(name: String = "label_", locationInfo: LocationInfo?): LLVMBasicBlockRef = currentFunctionContext!!.basicBlock(name, locationInfo)
 
     fun lastBasicBlock(): LLVMBasicBlockRef? = LLVMGetLastBasicBlock(currentFunctionContext!!.function)
 
@@ -454,8 +446,8 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
     internal class FunctionGenerationContext(override val context:Context,
                                              val function: LLVMValueRef,
                                              val codegen:CodeGenerator,
-                                             val startLocation:LocationInfo? = null,
-                                             val endLocation:LocationInfo? = null):ContextUtils {
+                                             startLocation:LocationInfo? = null,
+                                             endLocation:LocationInfo? = null):ContextUtils {
         val basicBlockToLastLocation = mutableMapOf<LLVMBasicBlockRef, LocationInfo>()
         var returnType: LLVMTypeRef? = LLVMGetReturnType(getFunctionType(function))
         val returns: MutableMap<LLVMBasicBlockRef, LLVMValueRef> = mutableMapOf()
@@ -469,24 +461,28 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         internal var localAllocs = 0
         internal var arenaSlot: LLVMValueRef? = null
 
-        internal val prologueBb = basicBlock("prologue")!!
-        internal val localsInitBb = basicBlock("locals_init")!!
-        internal val entryBb = basicBlock("entry")!!
-        internal val epilogueBb = basicBlock("epilogue")!!
-        internal val cleanupLandingpad = basicBlock("cleanup_landingpad")!!
+        internal val prologueBb        = basicBlockInFunction("prologue", startLocation)
+        internal val localsInitBb      = basicBlockInFunction("locals_init", startLocation)
+        internal val entryBb           = basicBlockInFunction("entry", startLocation)
+        internal val epilogueBb        = basicBlockInFunction("epilogue", endLocation)
+        internal val cleanupLandingpad = basicBlockInFunction("cleanup_landingpad", endLocation)
 
-        fun basicBlock(nameBb:String = "") = LLVMAppendBasicBlock(function, nameBb)
+        private fun basicBlockInFunction(name: String, locationInfo: LocationInfo?): LLVMBasicBlockRef {
+            val bb = LLVMAppendBasicBlock(function, name)!!
+            locationInfo?.let {
+                basicBlockToLastLocation.put(bb, locationInfo)
+            }
+            return bb
+        }
 
-        init {
-            startLocation?.let{
-                basicBlockToLastLocation.put(prologueBb, it)
-                basicBlockToLastLocation.put(entryBb, it)
-                basicBlockToLastLocation.put(localsInitBb, it)
-                basicBlockToLastLocation.put(cleanupLandingpad, it)
+        internal fun basicBlock(name:String, locationInfo:LocationInfo?):LLVMBasicBlockRef {
+            val currentBlock = codegen.currentBlock
+            val result = LLVMInsertBasicBlock(currentBlock, name)!!
+            locationInfo?.let {
+                basicBlockToLastLocation.put(result, locationInfo)
             }
-            endLocation?.let{
-                basicBlockToLastLocation.put(epilogueBb, it)
-            }
+            LLVMMoveBasicBlockAfter(result, currentBlock)
+            return result
         }
 
         internal fun prologue() {
