@@ -469,20 +469,20 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
 
         private fun basicBlockInFunction(name: String, locationInfo: LocationInfo?): LLVMBasicBlockRef {
             val bb = LLVMAppendBasicBlock(function, name)!!
-            locationInfo?.let {
-                basicBlockToLastLocation.put(bb, locationInfo)
-            }
+            bb.location(locationInfo)
             return bb
         }
 
         internal fun basicBlock(name:String, locationInfo:LocationInfo?):LLVMBasicBlockRef {
             val currentBlock = codegen.currentBlock
             val result = LLVMInsertBasicBlock(currentBlock, name)!!
-            locationInfo?.let {
-                basicBlockToLastLocation.put(result, locationInfo)
-            }
+            result.location(locationInfo)
             LLVMMoveBasicBlockAfter(result, currentBlock)
             return result
+        }
+
+        private fun LLVMBasicBlockRef.location(locationInfo:LocationInfo?) = locationInfo?.let {
+            basicBlockToLastLocation.put(this, locationInfo)
         }
 
         internal fun prologue() {
@@ -491,7 +491,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
             if (isObjectType(returnType!!)) {
                 this.returnSlot = LLVMGetParam(function, numParameters(function.type) - 1)
             }
-            codegen.positionAtEnd(localsInitBb!!)
+            codegen.positionAtEnd(localsInitBb)
             slotsPhi = codegen.phi(kObjHeaderPtrPtr)
             // First slot can be assigned to keep pointer to frame local arena.
             slotCount = 1
@@ -518,7 +518,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
                                     Int32(slotCount * pointerSize).llvm, Int32(alignment).llvm,
                                     Int1(0).llvm))
                 }
-                addPhiIncoming(slotsPhi!!, prologueBb!! to slots)
+                addPhiIncoming(slotsPhi!!, prologueBb to slots)
                 br(localsInitBb)
             }
 
