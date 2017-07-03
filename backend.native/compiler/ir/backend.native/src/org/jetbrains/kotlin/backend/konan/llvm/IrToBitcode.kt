@@ -478,20 +478,20 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     private inner class VariableScope : InnerScopeImpl() {
 
         override fun genDeclareVariable(descriptor: VariableDescriptor, value: LLVMValueRef?): Int {
-            return codegen.vars!!.createVariable(descriptor, value)
+            return codegen.vars.createVariable(descriptor, value)
         }
 
         override fun getDeclaredVariable(descriptor: VariableDescriptor): Int {
-            val index = codegen.vars!!.indexOf(descriptor)
+            val index = codegen.vars.indexOf(descriptor)
             return if (index < 0) super.getDeclaredVariable(descriptor) else return index
         }
 
         override fun genGetValue(descriptor: ValueDescriptor): LLVMValueRef {
-            val index = codegen.vars!!.indexOf(descriptor)
+            val index = codegen.vars.indexOf(descriptor)
             if (index < 0) {
                 return super.genGetValue(descriptor)
             } else {
-                return codegen.vars!!.load(index)
+                return codegen.vars.load(index)
             }
         }
     }
@@ -507,17 +507,17 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
         init {
             parameters.map { (descriptor, value) ->
-                codegen.vars!!.createImmutable(descriptor, value)
+                codegen.vars.createImmutable(descriptor, value)
             }
 
         }
 
         override fun genGetValue(descriptor: ValueDescriptor): LLVMValueRef {
-            val index = codegen.vars!!.indexOf(descriptor)
+            val index = codegen.vars.indexOf(descriptor)
             if (index < 0) {
                 return super.genGetValue(descriptor)
             } else {
-                return codegen.vars!!.load(index)
+                return codegen.vars.load(index)
             }
         }
     }
@@ -1104,7 +1104,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val result = evaluateExpression(value.value)
         val variable = currentCodeContext.getDeclaredVariable(value.descriptor)
         debugLocation(value)
-        codegen.vars!!.store(result, variable)
+        codegen.vars.store(result, variable)
         assert(value.type.isUnit())
         return codegen.theUnitInstanceRef.llvm
     }
@@ -1122,9 +1122,9 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             val location = debugLocation(value)
             val functionScope = (currentCodeContext.functionScope() as FunctionScope).declaration?.scope() ?: return
             val file = (currentCodeContext.fileScope() as FileScope).file.file()
-            val variable = codegen.vars!!.load(index)
+            val variable = codegen.vars.load(index)
             val line = value.startLine()
-            codegen.vars!!.debugInfoLocalVariableLocation(
+            codegen.vars.debugInfoLocalVariableLocation(
                     functionScope = functionScope,
                     diType        = variableDescriptor.type.diType(context, codegen.llvmTargetData),
                     name          = variableDescriptor.name,

@@ -35,9 +35,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
     var constructedClass:ClassDescriptor? = null
         get() = (currentFunctionContext?.functionDescriptor as? ConstructorDescriptor)?.constructedClass
         set
-    var vars:VariableManager? = null
-        get() = currentFunctionContext!!.vars
-        set
+    var vars = VariableManager(this)
     val intPtrType = LLVMIntPtrType(llvmTargetData)!!
     private val immOneIntPtrType = LLVMConstInt(intPtrType, 1, 1)!!
     fun setName(value: LLVMValueRef, name: String) = LLVMSetValueName(value, name)
@@ -453,7 +451,6 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
         val returns: MutableMap<LLVMBasicBlockRef, LLVMValueRef> = mutableMapOf()
         // TODO: remove, to make CodeGenerator descriptor-agnostic.
         var constructedClass: ClassDescriptor? = null
-        val vars = VariableManager(this.codegen)
         var functionDescriptor: FunctionDescriptor? = null
         internal var returnSlot: LLVMValueRef? = null
         internal var slotsPhi: LLVMValueRef? = null
@@ -555,7 +552,7 @@ internal class CodeGenerator(override val context: Context) : ContextUtils {
             }
 
             returns.clear()
-            vars.clear()
+            codegen.vars.clear()
             returnSlot = null
             slotsPhi = null
         }
