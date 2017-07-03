@@ -591,7 +591,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                 scope  = declaration.scope(),
                 line   = declaration.endLine(),
                 column = declaration.endColumn())
-        debugLocation(declaration)
         codegen.function(declaration.descriptor, startLocationInfo, endLocationInfo) {
             using(FunctionScope(declaration)) {
                 using(VariableScope()) {
@@ -665,6 +664,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     //-------------------------------------------------------------------------//
 
     private fun evaluateExpression(value: IrExpression): LLVMValueRef {
+        debugLocation(value)
         when (value) {
             is IrTypeOperatorCall    -> return evaluateTypeOperator           (value)
             is IrCall                -> return evaluateCall                   (value)
@@ -716,7 +716,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             return codegen.theUnitInstanceRef.llvm
         }
 
-        debugLocation(value)
         var objectPtr = getObjectInstanceStorage(value.descriptor)
         val bbCurrent = codegen.currentBlock
         val bbInit    = codegen.basicBlock("label_init", value.startLocation)
@@ -828,7 +827,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateThrow(expression: IrThrow): LLVMValueRef {
         val exception = evaluateExpression(expression.value)
-        debugLocation(expression)
         currentCodeContext.genThrow(exception)
         return codegen.kNothingFakeValue
     }
@@ -1093,7 +1091,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateGetValue(value: IrGetValue): LLVMValueRef {
         context.log{"evaluateGetValue               : ${ir2string(value)}"}
-        debugLocation(value)
         return currentCodeContext.genGetValue(value.descriptor)
     }
 
@@ -1103,7 +1100,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         context.log{"evaluateSetVariable            : ${ir2string(value)}"}
         val result = evaluateExpression(value.value)
         val variable = currentCodeContext.getDeclaredVariable(value.descriptor)
-        debugLocation(value)
         codegen.vars.store(result, variable)
         assert(value.type.isUnit())
         return codegen.theUnitInstanceRef.llvm
@@ -1113,10 +1109,8 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun generateVariable(value: IrVariable) {
         context.log{"generateVariable               : ${ir2string(value)}"}
-        debugLocation(value)
         val result = value.initializer?.let { evaluateExpression(it) }
         val variableDescriptor = value.descriptor
-        debugLocation(value)
         val index = currentCodeContext.genDeclareVariable(variableDescriptor, result)
         if (context.shouldContainDebugInfo()) {
             val location = debugLocation(value)
@@ -1138,7 +1132,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     //-------------------------------------------------------------------------//
 
     private fun evaluateTypeOperator(value: IrTypeOperatorCall): LLVMValueRef {
-        debugLocation(value)
         when (value.operator) {
             IrTypeOperator.CAST                      -> return evaluateCast(value)
             IrTypeOperator.IMPLICIT_INTEGER_COERCION -> return evaluateIntegerCoercion(value)
@@ -1168,7 +1161,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val type = value.typeOperand
         assert(type.isPrimitiveInteger())
         val result = evaluateExpression(value.argument)
-        debugLocation(value)
         val llvmSrcType = codegen.getLLVMType(value.argument.type)
         val llvmDstType = codegen.getLLVMType(type)
         val srcWidth    = LLVMGetIntTypeWidth(llvmSrcType)
@@ -1203,7 +1195,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val srcArg        = evaluateExpression(value.argument)                         // Evaluate src expression.
         val srcObjInfoPtr = codegen.bitcast(codegen.kObjHeaderPtr, srcArg)             // Cast src to ObjInfoPtr.
         val args          = listOf(srcObjInfoPtr, dstTypeInfo)                         // Create arg list.
-        debugLocation(value)                                                           // Set debug info.
         call(context.llvm.checkInstanceFunction, args)                                 // Check if dst is subclass of src.
         return srcArg
     }
@@ -1249,7 +1240,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val srcObjInfoPtr = codegen.bitcast(codegen.kObjHeaderPtr, obj)                // Cast src to ObjInfoPtr.
         val args          = listOf(srcObjInfoPtr, dstTypeInfo)                         // Create arg list.
 
-        debugLocation(element)
         val result = call(context.llvm.isInstanceFunction, args)                       // Check if dst is subclass of src.
         return LLVMBuildTrunc(codegen.builder, result, kInt1, "")!!             // Truncate result to boolean
     }
@@ -1265,17 +1255,14 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateGetField(value: IrGetField): LLVMValueRef {
         context.log{"evaluateGetField               : ${ir2string(value)}"}
-        debugLocation(value)
         if (value.descriptor.dispatchReceiverParameter != null) {
             val thisPtr = evaluateExpression(value.receiver!!)
-            debugLocation(value)
             return codegen.loadSlot(
-                        fieldPtrOfClass(thisPtr, value.descriptor), value.descriptor.isVar())
+                    fieldPtrOfClass(thisPtr, value.descriptor), value.descriptor.isVar())
         }
         else {
             assert (value.receiver == null)
             val ptr = context.llvmDeclarations.forStaticField(value.descriptor).storage
-            debugLocation(value)
             return codegen.loadSlot(ptr, value.descriptor.isVar())
         }
     }
@@ -1305,13 +1292,11 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
         if (value.descriptor.dispatchReceiverParameter != null) {
             val thisPtr = evaluateExpression(value.receiver!!)
-            debugLocation(value)
             codegen.storeAnyGlobal(valueToAssign, fieldPtrOfClass(thisPtr, value.descriptor))
         }
         else {
             assert (value.receiver == null)
             val globalValue = context.llvmDeclarations.forStaticField(value.descriptor).storage
-            debugLocation(value)
             codegen.storeAnyGlobal(valueToAssign, globalValue)
         }
 
@@ -1367,7 +1352,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateConst(value: IrConst<*>): LLVMValueRef {
         context.log{"evaluateConst                  : ${ir2string(value)}"}
-        debugLocation(value)
         when (value.kind) {
             IrConstKind.Null    -> return codegen.kNullObjHeaderPtr
             IrConstKind.Boolean -> when (value.value) {
@@ -1402,7 +1386,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             evaluated
         }
 
-        debugLocation(expression)
         currentCodeContext.genReturn(target, ret)
         return codegen.kNothingFakeValue
     }
@@ -1869,7 +1852,6 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     private fun evaluateConstructorCall(callee: IrCall, args: List<LLVMValueRef>): LLVMValueRef {
         context.log{"evaluateConstructorCall        : ${ir2string(callee)}"}
         return memScoped {
-            debugLocation(callee)
             val constructedClass = (callee.descriptor as ConstructorDescriptor).constructedClass
             val thisValue = if (constructedClass.isArray) {
                 assert(args.size >= 1 && args[0].type == int32Type)
