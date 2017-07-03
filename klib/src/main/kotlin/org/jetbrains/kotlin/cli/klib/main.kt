@@ -19,6 +19,7 @@ package org.jetbrains.kotlin.cli.klib
 import kotlin.system.exitProcess
 import java.util.Properties
 // TODO: Extract these as a shared jar?
+import org.jetbrains.kotlin.backend.konan.library.impl.KonanLibrary
 import org.jetbrains.kotlin.backend.konan.library.impl.LibraryReaderImpl
 import org.jetbrains.kotlin.backend.konan.library.KonanLibrarySearchPathResolver
 import org.jetbrains.kotlin.backend.konan.util.File
@@ -101,17 +102,18 @@ class Library(val name: String, val requestedRepository: String?, val target: St
 
     fun install() {
         remove(true) 
-
+/*
         val klibFile = libraryInCurrentDir(name).klibFile
         val newLocation = File(repository, "klib")
         newLocation.mkdirs()
         val newFile = File(newLocation, klibFile.name)
         klibFile.copyTo(newFile)
+*/
     }
 
     fun remove(blind: Boolean = false) {
         if (!repository.exists) error("Repository does not exist: $repository")
-
+/*
         val library = try {
             val library = libraryInRepo(repository, name)
             if (blind) warn("Removing The previously installed $name from $repository.")
@@ -124,6 +126,7 @@ class Library(val name: String, val requestedRepository: String?, val target: St
         }
         library?.libDir?.deleteRecursively()
         library?.klibFile?.delete()
+*/
     }
 
     fun contents() {
@@ -141,7 +144,7 @@ class Library(val name: String, val requestedRepository: String?, val target: St
 val currentAbiVersion = 1
 
 val File.konanLibrary 
-    get() = LibraryReaderImpl(this, currentAbiVersion, null)
+    get() = LibraryReaderImpl(KonanLibrary(this), currentAbiVersion)
 
 fun libraryInRepo(repository: File, name: String): LibraryReaderImpl {
     val resolver = KonanLibrarySearchPathResolver(listOf(repository.absolutePath), null, null, skipCurrentDir = true)

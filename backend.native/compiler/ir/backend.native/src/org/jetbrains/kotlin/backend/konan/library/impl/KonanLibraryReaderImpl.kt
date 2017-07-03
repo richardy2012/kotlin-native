@@ -24,13 +24,78 @@ import org.jetbrains.kotlin.backend.konan.util.*
 import org.jetbrains.kotlin.config.LanguageVersionSettings
 import org.jetbrains.kotlin.konan.target.KonanTarget
 
+class ZippedKonanLibrary(val klibFile: File, override val target: KonanTarget? = null): KonanLibrary {
+    init {
+        if (!klibFile.exists) {
+            error("Could not find $klibFile.")
+        }
+        if (!klibFile.isFile) {
+            error("Expected $klibFile to be a regular file.")
+        }
+    }
+
+    override val libraryName = klibFile.path.removeSuffixIfPresent(".klib")
+    //override val libDir = File(klibFile.zipPath("/"))
+    override val libDir = File("/") // doesn't seem to be right. it is not in the default file system.
+
+    // TODO: we don't actually need to extract all of them.
+    override val manifestFile: File by lazy {
+        extract(super.manifestFile)
+    }
+
+    override val resourcesDir: File by lazy {
+        extractDir(super.resourcesDir)
+    }
+
+    override val kotlinDir: File by lazy {
+        extractDir(super.kotlinDir)
+    }
+
+    override val nativeDir: File by lazy {
+        extractDir(super.nativeDir)
+    }
+
+    override val linkdataDir: File by lazy {
+        extractDir(super.linkdataDir)
+    }
+
+    fun extract(file: File): File {
+        val temporary = File.createTempFile(file.name)
+        temporary.deleteOnExit()
+        klibFile.unzipSingleFileTo(file.path, temporary.path)
+        return temporary
+    }
+
+    fun extractDir(directory: File): File {
+        // TODO: Mark all recursively extracted as deleteOnExit.
+        val temporary = File.createTempDir(directory.name)
+        klibFile.unzipDirectoryRecursivelyTo(directory.path, temporary.path)
+        return temporary
+    }
+
+    fun unpackTo(newDir: File) {
+        if (newDir.exists) {
+            if (newDir.isDirectory) 
+                newDir.deleteRecursively()
+            else 
+                newDir.delete()
+        }
+        klibFile.unzipAs(newDir)
+        if (!newDir.exists) error("Could not unpack $klibFile as $newDir.")
+    }
+}
+
+class UnzippedKonanLibrary(override val libDir: File, override val target: KonanTarget? = null): KonanLibrary {
+    override val libraryName = libDir.path
+}
+
+fun KonanLibrary(klib: File, target: KonanTarget? = null) = 
+    if (klib.isFile) ZippedKonanLibrary(klib, target) 
+    else UnzippedKonanLibrary(klib, target)
+
 abstract class FileBasedLibraryReader(
-    val file: File, val currentAbiVersion: Int,
+    val currentAbiVersion: Int,
     val reader: MetadataReader): KonanLibraryReader {
-
-    override val libraryName: String
-        get() = file.path
-
     val moduleHeaderData: ByteArray by lazy {
         reader.loadSerializedModule()
     }
@@ -43,36 +108,9 @@ abstract class FileBasedLibraryReader(
             moduleHeaderData)
 }
 
-
-class LibraryReaderImpl(override val libDir: File, currentAbiVersion: Int,
-        override val target: KonanTarget?) : 
-            FileBasedLibraryReader(libDir, currentAbiVersion, MetadataReaderImpl(libDir)), 
-            KonanLibrary  {
-
-    public constructor(path: String, currentAbiVersion: Int, target: KonanTarget?) : 
-        this(File(path), currentAbiVersion, target) 
-
-    init {
-        unpackIfNeeded()
-    }
-
-    // TODO: Search path processing is also goes somewhere around here.
-    fun unpackIfNeeded() {
-        // TODO: Clarify the policy here.
-        if (libDir.exists) {
-            if (libDir.isDirectory) return
-        }
-        if (!klibFile.exists) {
-            error("Could not find neither $libDir nor $klibFile.")
-        }
-        if (klibFile.isFile) {
-            klibFile.unzipAs(libDir)
-
-            if (!libDir.exists) error("Could not unpack $klibFile as $libDir.")
-        } else {
-            error("Expected $klibFile to be a regular file.")
-        }
-    }
+class LibraryReaderImpl(library: KonanLibrary, currentAbiVersion: Int) : 
+            FileBasedLibraryReader(currentAbiVersion, MetadataReaderImpl(library)), 
+            KonanLibrary by library  {
 
     val manifestProperties: Properties by lazy {
         manifestFile.loadProperties()

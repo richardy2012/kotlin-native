@@ -18,6 +18,7 @@ package org.jetbrains.kotlin.backend.konan
 
 import com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.backend.konan.library.KonanLibraryReader
+import org.jetbrains.kotlin.backend.konan.library.impl.KonanLibrary
 import org.jetbrains.kotlin.backend.konan.library.impl.LibraryReaderImpl
 import org.jetbrains.kotlin.backend.konan.library.KonanLibrarySearchPathResolver
 import org.jetbrains.kotlin.backend.konan.util.profile
@@ -75,7 +76,7 @@ class KonanConfig(val project: Project, val configuration: CompilerConfiguration
     internal val libraries: List<KonanLibraryReader> by lazy {
         val target = targetManager.target
         // Here we have chosen a particular KonanLibraryReader implementation.
-        librariesFound.map{it -> LibraryReaderImpl(it, currentAbiVersion, target)}
+        librariesFound.map{it -> LibraryReaderImpl(KonanLibrary(it, target), currentAbiVersion)}
     }
 
     private val loadedDescriptors = loadLibMetadata()

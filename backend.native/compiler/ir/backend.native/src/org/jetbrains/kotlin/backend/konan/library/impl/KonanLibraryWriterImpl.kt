@@ -36,6 +36,10 @@ class LibraryWriterImpl(override val libDir: File, currentAbiVersion: Int,
         target:KonanTarget?, nopack: Boolean): 
         this(File(path), currentAbiVersion, target, nopack)
 
+    override val libraryName = libDir.path
+    val klibFile 
+       get() = File("${libDir.path}.klib")
+
     // TODO: Experiment with separate bitcode files.
     // Per package or per class.
     val mainBitcodeFile = File(kotlinDir, "program.kt.bc")
@@ -46,6 +50,7 @@ class LibraryWriterImpl(override val libDir: File, currentAbiVersion: Int,
         // TODO: figure out the proper policy here.
         libDir.deleteRecursively()
         klibFile.delete()
+
         libDir.mkdirs()
         linkdataDir.mkdirs()
         targetDir.mkdirs()
@@ -63,7 +68,7 @@ class LibraryWriterImpl(override val libDir: File, currentAbiVersion: Int,
     }
 
     override fun addLinkData(linkData: LinkData) {
-        MetadataWriterImpl(libDir).addLinkData(linkData)
+        MetadataWriterImpl(this).addLinkData(linkData)
     }
 
     override fun addNativeBitcode(library: String) {

@@ -20,7 +20,7 @@ import org.jetbrains.kotlin.backend.konan.library.KonanLibrary
 import org.jetbrains.kotlin.backend.konan.library.MetadataReader
 import org.jetbrains.kotlin.backend.konan.util.File
 
-class MetadataReaderImpl(override val libDir: File) : MetadataReader, KonanLibrary {
+class MetadataReaderImpl(library: KonanLibrary) : MetadataReader, KonanLibrary by library {
 
     override fun loadSerializedModule(): ByteArray {
         return moduleHeaderFile.readBytes()

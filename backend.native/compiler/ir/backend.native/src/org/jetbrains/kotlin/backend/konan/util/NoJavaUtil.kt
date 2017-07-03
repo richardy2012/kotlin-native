@@ -78,6 +78,14 @@ class File(val path: String) {
             val javaDirectory = directory ?.let { java.io.File(directory.path) }
             return java.io.File.createTempFile(name, suffix, javaDirectory).path.File()
         }
+
+        fun createTempDir(name: String, suffix: String? = null, directory: File? = null): File {
+            val javaDirectory = directory ?.let { java.io.File(directory.path) }
+            return kotlin.io.createTempDir(name, suffix, javaDirectory).path.File()
+
+        }
+
+
     }
 }
 
@@ -86,13 +94,15 @@ fun String.File() = File(this)
 private val File.zipUri: URI
         get() = URI.create("jar:${this.toPath().toUri()}")
 
-private val File.zipRootPath: Path
-    get() {
-        val zipUri = this.zipUri
-        val allowCreation = hashMapOf("create" to "true")
-        val zipfs = FileSystems.newFileSystem(zipUri, allowCreation, null)
-        return zipfs.getPath("/")
-    }
+fun File.zipPath(path: String): Path {
+    val zipUri = this.zipUri
+    val allowCreation = hashMapOf("create" to "true")
+    val zipfs = FileSystems.newFileSystem(zipUri, allowCreation, null)
+    return zipfs.getPath(path)
+}
+
+val File.zipRootPath: Path
+    get() = this.zipPath("/")
 
 private fun File.toPath() = Paths.get(this.path)
 
@@ -105,6 +115,18 @@ fun File.zipDirAs(zipFile: File) {
 fun File.unzipAs(directory: File) {
     val zipPath = this.zipRootPath
     zipPath.recursiveCopyTo(directory.toPath())
+    zipPath.fileSystem.close()
+}
+
+fun File.unzipSingleFileTo(path: String, newName: String) {
+    val zipPath = this.zipPath(path)
+    zipPath.recursiveCopyTo(File(newName).toPath()) // shouldn't implement a copyTo?
+    zipPath.fileSystem.close()
+}
+
+fun File.unzipDirectoryRecursivelyTo(path: String, newName: String) {
+    val zipPath = this.zipPath(path)
+    zipPath.recursiveCopyTo(File(newName).toPath())
     zipPath.fileSystem.close()
 }
 
