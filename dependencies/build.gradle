@@ -1,282 +1,117 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
+import groovy.transform.stc.ClosureParams
+import groovy.transform.stc.FromString
+import org.jetbrains.kotlin.konan.target.*
+import org.jetbrains.kotlin.konan.util.DependencyProcessor
+import static org.jetbrains.kotlin.konan.target.KonanTarget.*
+import org.jetbrains.kotlin.konan.util.Named
+import org.jetbrains.kotlin.konan.properties.KonanPropertiesLoader
+import org.jetbrains.kotlin.konan.target.ConfigurablesImplKt
+import org.jetbrains.kotlin.konan.target.KonanTarget
+import org.jetbrains.kotlin.konan.target.TargetManager
+import org.jetbrains.kotlin.konan.util.DependencyProcessor
 
-import static DependencyTaskKind.*
+import static org.jetbrains.kotlin.konan.util.VisibleNamedKt.getVisibleName
 
 buildscript {
+    apply from: "$rootDir/gradle/kotlinGradlePlugin.gradle"
+
     repositories {
-        mavenCentral()
-        jcenter()
-    }
-
-    dependencies {
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-        classpath 'com.jfrog.bintray.gradle:gradle-bintray-plugin:1.7.3'
-    }
-}
-
-apply plugin: 'com.jfrog.bintray'
-
-rootProject.ext.konanPropertiesFile = project(':backend.native').file('konan.properties')
-rootProject.ext.konanProperties = new Properties()
-rootProject.konanProperties.load(new FileInputStream(rootProject.konanPropertiesFile))
-
-configurations {
-    kotlin_compiler_jar
-    kotlin_compiler_pom
-    kotlin_compiler_src
-    kotlin_compiler_doc
-}
-
-// TODO: Check if we really need the our bintray mirror and delete the uploading code below if we don't.
-repositories {
-    maven { url kotlinCompilerRepo }
-}
-
-dependencies {
-    kotlin_compiler_jar "$kotlinCompilerModule@jar"
-    kotlin_compiler_pom "$kotlinCompilerModule@pom"
-    kotlin_compiler_src "$kotlinCompilerModule:sources@jar"
-    kotlin_compiler_doc "$kotlinCompilerModule:javadoc@jar"
-}
-
-// Hack kotlin-compiler pom-file to resolve the dependency correctly.
-task generatePom(type: DefaultTask) {
-    def originalPom = configurations.kotlin_compiler_pom.singleFile
-    inputs.file(originalPom)
-
-    def (_, artifactIdString, versionString) = kotlinCompilerModule.tokenize(':')
-    def newPom = file("${temporaryDir.canonicalPath}/$artifactIdString-${versionString}.pom")
-    outputs.file(newPom)
-
-    doLast {
-        def xml = new XmlParser().parse(originalPom)
-        def parent = xml.children().find() { it.name().localPart == 'parent' } // <parent> </parent> section, not the parent node.
-        if (parent != null) {
-            def groupId = parent.groupId
-            def version = parent.version
-            xml.append(groupId)
-            xml.append(version)
-            xml.remove(parent)
-        }
-        new XmlNodePrinter(new PrintWriter(new FileWriter(newPom))).print(xml)
-    }
-}
-
-bintray {
-    user = project.hasProperty('bintrayUser') ? project.property('bintrayUser') : System.getenv('BINTRAY_USER')
-    key  = project.hasProperty('bintrayKey') ? project.property('bintrayKey') : System.getenv('BINTRAY_KEY')
-    pkg {
-        repo = 'kotlin-native-dependencies'
-        name = 'kotlin-compiler-builds'
-        userOrg = 'jetbrains'
-        publish = true
-        override = project.hasProperty("override")
-    }
-    filesSpec {
-        // kotlinCompilerModule@jar and @pom -> groupId/with/dots/replaced/by/slashes/artifactId/<major-version>-SNAPSHOT
-        // e.g. org.jetbrains.kotlin:kotlin-compiler:1.1-20170426.212805-507 -> org/jetbrains/kotlin/kotlin-compiler/1.1-SNAPSHOT
-        def (groupId, artifactId, version) = kotlinCompilerModule.tokenize(':')
-        def groupPath = groupId.replace('.', '/')
-        def artifactPath = artifactId
-        def versionPath =  "${version.tokenize('-')[0]}-SNAPSHOT"
-        from project.configurations.kotlin_compiler_jar.files
-        from project.configurations.kotlin_compiler_src.files
-        from project.configurations.kotlin_compiler_doc.files
-        from generatePom.outputs.files
-        into "$groupPath/$artifactPath/$versionPath"
-    }
-}
-
-task update_kotlin_compiler(type: DefaultTask) {
-    dependsOn(bintrayUpload)
-}
-
-abstract class NativeDep extends DefaultTask {
-
-    private String getCurrentHostTarget() {
-        if (project.isMac() && project.isAmd64()) {
-            return 'darwin-macos'
-        } else if (project.isLinux() && project.isAmd64()) {
-            return 'linux-x86-64'
-        } else if (project.isWindows() && project.isAmd64()) {
-            return 'windows-x86-64'
-        } else {
-            throw project.unsupportedPlatformException()
+        maven {
+            url = 'https://cache-redirector.jetbrains.com/jcenter'
         }
     }
+}
 
-    protected final String host = getCurrentHostTarget();
-    String baseUrl = "https://jetbrains.bintray.com/kotlin-native-dependencies"
+/**
+ * Downloads dependencies from the given URL into the given directory.
+ * The set of dependencies is determined by konanPropertiesLoader.
+ */
+class NativeDep extends DefaultTask {
+    static final String baseUrl = "https://cache-redirector.jetbrains.com/download.jetbrains.com/kotlin/native"
 
-    @Input
-    abstract String getFileName()
+    KonanPropertiesLoader konanPropertiesLoader = null
 
-    protected String getUrl() {
-        return "$baseUrl/$fileName"
-    }
-
-    protected File getBaseOutDir() {
-        final File res = project.rootProject.file("dist/dependencies")
+    final File getBaseOutDir() {
+        final File res = project.rootProject.ext.dependenciesDir
         res.mkdirs()
         return res
     }
 
-    protected File download() {
-        File result = new File(baseOutDir, fileName)
-        if (!result.exists())
-            ant.get(src: url, dest: result, usetimestamp: true)
-        return result
-    }
-}
-
-class TgzNativeDep extends NativeDep {
-    String baseName
-
-    @Override
-    String getFileName() {
-        return "${baseName}.tar.gz"
-    }
-
-    @OutputDirectory
-    File getOutputDir() {
-        return new File(baseOutDir, baseName)
-    }
-
     @TaskAction
-    public void downloadAndExtract() {
-        File archived = this.download()
-
-        try {
-            // Builtin Gradle unpacking tools seem to unable to handle symlinks;
-            // Use external "tar" executable as workaround:
-            project.exec {
-                executable "tar"
-                workingDir baseOutDir
-                args "xf", archived
-            }
-        } catch (Throwable e) {
-            e.printStackTrace()
-            project.delete(outputDir)
-            throw e
-        }
+    void downloadAndExtract() {
+        def downloader = new DependencyProcessor(baseOutDir, konanPropertiesLoader, baseUrl, false)
+        downloader.showInfo = false
+        downloader.run()
     }
 }
 
-class HelperNativeDep extends TgzNativeDep {
+enum DependencyKind {
+    LLVM(            "llvm",            { it.llvmHome },       { "llvmDir" }        ),
+    LIBFFI(          "libffi",          { it.libffiDir }                            )
 
-    public HelperNativeDep() {
-        dependsOn(':tools:helpers:jar')
-    }
 
-    @TaskAction
-    public void downloadAndExtract() {
-        project.javaexec {
-            main = "org.jetbrains.kotlin.konan.MainKt"
-            classpath += project.findProject(':tools:helpers').getConfigurations().getByName("runtime")
-            classpath += project.findProject(':tools:helpers').getConfigurations().getByName("runtime").artifacts.files
-            args baseOutDir.canonicalPath, baseUrl, baseName
-        }
-    }
-}
-
-static String substituteName(String name) {
-    switch (name) {
-        case "macbook": return "osx"
-        case "iphone": return "ios"
-        case "iphoneSim": return "ios_sim"
-    }
-    return name
-}
-
-enum DependencyTaskKind {
-    LIBFFI("Libffi"), SYSROOT("Sysroot")
-
-    DependencyTaskKind(String name) {
+    DependencyKind(String name,
+            @ClosureParams(value = FromString.class, options = "KonanPropertiesLoader") Closure<String> dirGetter,
+            @ClosureParams(value = FromString.class, options = "KonanTarget") Closure<String> propertyNameGetter =
+                           {target -> "${target.visibleName}${name.capitalize()}Dir"}) {
         this.name = name
+        this.dirGetter = dirGetter
+        this.propertyNameGetter = propertyNameGetter
     }
 
-    String name = ""
+    private String name
+    private Closure<String> dirGetter           // KonanProperties -> String
+    private Closure<String> propertyNameGetter  // KonanTarget -> String
+
+    String getDirectory(KonanPropertiesLoader properties) {
+        return dirGetter(properties)
+    }
+
+    String getPropertyName(KonanTarget target) {
+        return propertyNameGetter(target)
+    }
+
     String toString() { return name }
 }
 
-void dependencyTask(String target, DependencyTaskKind kind) {
-    String dependencyBaseName
-    def properties = rootProject.konanProperties
-    switch (kind) {
-        case LIBFFI:
-            dependencyBaseName = properties.getProperty("libffiDir.${substituteName(target)}")
-            break
-        case SYSROOT:
-            dependencyBaseName = properties.getProperty("targetSysRoot.${substituteName(target)}")
-            break
-    }
-    if (dependencyBaseName == null) {
-        throw project.unsupportedPlatformException()
+def platformManager = rootProject.ext.platformManager
+
+
+platformManager.filteredOutEnabledButNotSupported.each { target ->
+    def loader = platformManager.loader(target)
+
+    task "${target}Dependencies"(type: NativeDep) {
+        konanPropertiesLoader = loader
     }
 
-    task "${target}${kind}"(type: HelperNativeDep) {
-        baseName = dependencyBaseName
+    // Also resolves all dependencies:
+    final DependencyProcessor dependencyProcessor = new DependencyProcessor(
+            project.rootProject.ext.dependenciesDir,
+            loader.properties,
+            loader.dependencies,
+            NativeDep.baseUrl,
+            false
+    )
+
+    DependencyKind.values().each { kind ->
+        def dir = kind.getDirectory(loader)
+        if (dir != null) {
+            String path = dependencyProcessor.resolveRelative(dir).canonicalPath
+            rootProject.ext.set(kind.getPropertyName(target), path)
+        }
     }
-}
-
-if (isLinux()) {
-    // The gcc toolchain contains the sysroot for linux platform.
-    task gccToolchain(type: HelperNativeDep) {
-        baseName = "target-gcc-toolchain-3-$host"
-    }
-
-    dependencyTask("linux", LIBFFI)
-    dependencyTask("raspberrypi", SYSROOT)
-    dependencyTask("raspberrypi", LIBFFI)
-} else if (isWindows()) {
-    task mingwWithLlvm(type: HelperNativeDep) {
-        baseName = "msys2-mingw-w64-x86_64-gcc-6.3.0-clang-llvm-3.9.1-$host"
-    }
-
-    dependencyTask("mingw", LIBFFI)
-} else {
-    dependencyTask("macbook", SYSROOT)
-    dependencyTask("macbook", LIBFFI)
-    dependencyTask("iphone", SYSROOT)
-    dependencyTask("iphone", LIBFFI)
-
-    // TODO: re-enable when we known how to bring the simulator sysroot to dependencies.
-    // dependencyTask("iphoneSim", SYSROOT)
-}
-
-if (isLinux() || isMac()) {
-    task llvm(type: HelperNativeDep) {
-        baseName = "clang-llvm-$llvmVersion-$host"
-    }
-
-    dependencyTask("android_arm32", SYSROOT)
-    dependencyTask("android_arm32", LIBFFI)
-    dependencyTask("android_arm64", SYSROOT)
-    dependencyTask("android_arm64", LIBFFI)
 }
 
 task update(type: Copy) {
     dependsOn tasks.withType(NativeDep)
 }
 
-tasks.withType(TgzNativeDep) {
-    rootProject.ext.set("${name}Dir", outputDir.path)
+task rmDotKonan(type: Delete) {
+    def dir = System.getenv("KONAN_DATA_DIR") ?: "${System.getProperty("user.home")}/.konan"
+    delete dir
 }
 
-if (isWindows()) {
-    rootProject.ext.set("llvmDir", mingwWithLlvmDir)
-}

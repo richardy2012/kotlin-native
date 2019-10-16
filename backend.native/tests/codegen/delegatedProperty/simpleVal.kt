@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.delegatedProperty.simpleVal
+
+import kotlin.test.*
+
 import kotlin.reflect.KProperty
 
 class Delegate {
@@ -11,6 +20,6 @@ class C {
     val x: Int by Delegate()
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     println(C().x)
 }

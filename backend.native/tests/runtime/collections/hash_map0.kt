@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package runtime.collections.hash_map0
+
+import kotlin.test.*
+
 fun assertTrue(cond: Boolean) {
     if (!cond)
         println("FAIL")
@@ -247,7 +256,7 @@ fun testEntriesIteratorSet() {
     assertEquals(mapOf("a" to "1!", "b" to "2!", "c" to "3!"), m)
 }
 
-fun main(args : Array<String>) {
+@Test fun runTest() {
     testBasic()
     testRehashAndCompact()
     testClear()

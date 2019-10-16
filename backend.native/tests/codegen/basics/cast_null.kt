@@ -1,15 +1,25 @@
-fun main(args: Array<String>) {
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.basics.cast_null
+
+import kotlin.test.*
+
+@Test
+fun runTest() {
     testCast(null, false)
     testCastToNullable(null, true)
-    testCastToNullable(Test(), true)
+    testCastToNullable(TestKlass(), true)
     testCastToNullable("", false)
-    testCastNotNullableToNullable(Test(), true)
+    testCastNotNullableToNullable(TestKlass(), true)
     testCastNotNullableToNullable("", false)
 
     println("Ok")
 }
 
-class Test
+class TestKlass
 
 fun ensure(b: Boolean) {
     if (!b) {
@@ -19,7 +29,7 @@ fun ensure(b: Boolean) {
 
 fun testCast(x: Any?, expectSuccess: Boolean) {
     try {
-        x as Test
+        x as TestKlass
     } catch (e: Throwable) {
         ensure(!expectSuccess)
         return
@@ -29,7 +39,7 @@ fun testCast(x: Any?, expectSuccess: Boolean) {
 
 fun testCastToNullable(x: Any?, expectSuccess: Boolean) {
     try {
-        x as Test?
+        x as TestKlass?
     } catch (e: Throwable) {
         ensure(!expectSuccess)
         return
@@ -39,7 +49,7 @@ fun testCastToNullable(x: Any?, expectSuccess: Boolean) {
 
 fun testCastNotNullableToNullable(x: Any, expectSuccess: Boolean) {
     try {
-        x as Test?
+        x as TestKlass?
     } catch (e: Throwable) {
         ensure(!expectSuccess)
         return

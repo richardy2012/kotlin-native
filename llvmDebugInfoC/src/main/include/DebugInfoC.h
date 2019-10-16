@@ -20,7 +20,9 @@
 # ifdef __cplusplus
 extern "C" {
 # endif
-typedef struct DIBuilder          *DIBuilderRef;
+
+typedef struct LLVMOpaqueDIBuilder *DIBuilderRef;
+//typedef struct DIBuilder          *DIBuilderRef;
 typedef struct DICompileUnit      *DICompileUnitRef;
 typedef struct DIFile             *DIFileRef;
 typedef struct DIBasicType        *DIBasicTypeRef;
@@ -31,13 +33,14 @@ typedef struct DISubprogram       *DISubprogramRef;
 typedef struct DIModule           *DIModuleRef;
 typedef struct DIScope            *DIScopeOpaqueRef;
 typedef struct DISubroutineType   *DISubroutineTypeRef;
-typedef struct DISubprogram       *DISubprogramRef;
+//typedef struct DISubprogram       *DISubprogramRef;
 typedef struct DILocation         *DILocationRef;
 typedef struct DILocalVariable    *DILocalVariableRef;
 typedef struct DIExpression       *DIExpressionRef;
 
 DIBuilderRef DICreateBuilder(LLVMModuleRef module);
 void DIFinalize(DIBuilderRef builder);
+void DIDispose(DIBuilderRef builder);
 
 DICompileUnitRef DICreateCompilationUnit(DIBuilderRef builder, unsigned int lang, const char *File, const char* dir, const char * producer, int isOptimized, const char * flags, unsigned int rv);
 
@@ -59,6 +62,7 @@ DICompositeTypeRef DICreateArrayType(DIBuilderRef refBuilder,
                                       uint64_t elementsCount);
 
 DIDerivedTypeRef DICreateReferenceType(DIBuilderRef refBuilder, DITypeOpaqueRef refType);
+DIDerivedTypeRef DICreatePointerType(DIBuilderRef refBuilder, DITypeOpaqueRef refType);
 DICompositeTypeRef DICreateReplaceableCompositeType(DIBuilderRef refBuilder,
                                                     int tag,
                                                     const char *name,
@@ -81,6 +85,10 @@ DIModuleRef DICreateModule(DIBuilderRef builder, DIScopeOpaqueRef scope,
                            const char* name, const char* configurationMacro,
                            const char* includePath, const char *iSysRoot);
 
+DIScopeOpaqueRef DICreateLexicalBlockFile(DIBuilderRef builderRef, DIScopeOpaqueRef scopeRef, DIFileRef fileRef);
+
+DIScopeOpaqueRef DICreateLexicalBlock(DIBuilderRef builderRef, DIScopeOpaqueRef scopeRef, DIFileRef fileRef, int line, int column);
+
 DISubprogramRef DICreateFunction(DIBuilderRef builder, DIScopeOpaqueRef scope,
                                  const char* name, const char *linkageName,
                                  DIFileRef file, unsigned lineNo,
@@ -92,16 +100,18 @@ DISubroutineTypeRef DICreateSubroutineType(DIBuilderRef builder,
                                            unsigned typesCount);
 
 DILocalVariableRef DICreateAutoVariable(DIBuilderRef builder, DIScopeOpaqueRef scope, const char *name, DIFileRef file, unsigned line, DITypeOpaqueRef type);
-void DIInsertDeclarationWithEmptyExpression(DIBuilderRef builder, LLVMValueRef value, DILocalVariableRef localVariable, DILocationRef location, LLVMBasicBlockRef bb);
+DILocalVariableRef DICreateParameterVariable(DIBuilderRef builder, DIScopeOpaqueRef scope, const char *name, unsigned argNo, DIFileRef file, unsigned line, DITypeOpaqueRef type);
+void DIInsertDeclaration(DIBuilderRef builder, LLVMValueRef value, DILocalVariableRef localVariable, DILocationRef location, LLVMBasicBlockRef bb, int64_t *expr, uint64_t exprCount);
 DIExpressionRef DICreateEmptyExpression(DIBuilderRef builder);
 void DIFunctionAddSubprogram(LLVMValueRef fn, DISubprogramRef sp);
-DILocationRef LLVMBuilderSetDebugLocation(LLVMBuilderRef builder, unsigned line, unsigned col, DIScopeOpaqueRef scope);
+DILocationRef LLVMCreateLocation(LLVMContextRef contextRef, unsigned line, unsigned col, DIScopeOpaqueRef scope);
+DILocationRef LLVMCreateLocationInlinedAt(LLVMContextRef contextRef, unsigned line, unsigned col, DIScopeOpaqueRef scope, DILocationRef refLocation);
+void LLVMBuilderSetDebugLocation(LLVMBuilderRef builder, DILocationRef refLocation);
 void LLVMBuilderResetDebugLocation(LLVMBuilderRef builder);
 const char* LLVMBuilderGetCurrentBbName(LLVMBuilderRef builder);
 const char *DIGetSubprogramLinkName(DISubprogramRef sp);
 LLVMValueRef LLVMBuilderGetCurrentFunction(LLVMBuilderRef builder);
 int DISubprogramDescribesFunction(DISubprogramRef sp, LLVMValueRef fn);
-void DIScopeDump(DIScopeOpaqueRef scope);
 # ifdef __cplusplus
 }
 # endif

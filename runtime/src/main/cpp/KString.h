@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef RUNTIME_STRING_H
-#define RUNTIME_STRING_H
+#ifndef RUNTIME_KSTRING_H
+#define RUNTIME_KSTRING_H
 
 #include "Common.h"
 #include "Memory.h"
@@ -27,7 +27,9 @@ extern "C" {
 #endif
 
 OBJ_GETTER(CreateStringFromCString, const char* cstring);
-OBJ_GETTER(CreateStringFromUtf8, const char* utf8, uint32_t size);
+OBJ_GETTER(CreateStringFromUtf8, const char* utf8, uint32_t lengthBytes);
+char* CreateCStringFromString(KConstRef kstring);
+void DisposeCString(char* cstring);
 
 #ifdef __cplusplus
 }
@@ -52,6 +54,4 @@ int binarySearchRange(const T* array, int arrayLength, T needle) {
   return middle - (needle < value ? 1 : 0);
 }
 
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-
-#endif // RUNTIME_STRING_H
+#endif // RUNTIME_KSTRING_H

@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.inline.inline16
+
+import kotlin.test.*
+
 @Suppress("NOTHING_TO_INLINE")
 inline fun <T, C : MutableCollection<in T>> foo(destination: C, predicate: (T) -> Boolean): C {
     for (element in destination) {
@@ -12,6 +21,6 @@ fun bar(): Boolean {
     return result.isEmpty()
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     println(bar().toString())
 }

@@ -1,20 +1,14 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package kotlin
+
+import kotlin.native.concurrent.freeze
+import kotlin.native.internal.ExportForCppRuntime
+import kotlin.native.internal.ExportTypeInfo
+import kotlin.native.internal.NativePtrArray
 
 /**
  * The base class for all errors and exceptions. Only instances of this class can be thrown or caught.
@@ -31,29 +25,60 @@ public open class Throwable(open val message: String?, open val cause: Throwable
 
     constructor() : this(null, null)
 
-    private val stacktrace: Array<String> = getCurrentStackTrace()
+    @get:ExportForCppRuntime("Kotlin_Throwable_getStackTrace")
+    private val stackTrace = getCurrentStackTrace()
 
-    fun printStackTrace() {
-        println(this.toString())
-        for (element in stacktrace) {
-            println("        at " + element)
+    private val stackTraceStrings: Array<String> by lazy {
+        getStackTraceStrings(stackTrace).freeze()
+    }
+
+    /**
+     * Returns an array of stack trace strings representing the stack trace
+     * pertaining to this throwable.
+     */
+    public fun getStackTrace(): Array<String> = stackTraceStrings
+
+    internal fun getStackTraceAddressesInternal(): List<Long> =
+            (0 until stackTrace.size).map { index -> stackTrace[index].toLong() }
+
+    /**
+     * Prints the stack trace of this throwable to the standard output.
+     */
+    public fun printStackTrace(): Unit = dumpStackTrace { println(it) }
+
+    internal fun dumpStackTrace(): String = buildString {
+        dumpStackTrace { appendln(it) }
+    }
+
+    private inline fun writeStackTraceElements(throwable: Throwable, writeln: (String) -> Unit) {
+        for (element in throwable.stackTraceStrings) {
+            writeln("        at $element")
         }
-
-        this.cause?.printEnclosedStackTrace(this)
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun printEnclosedStackTrace(enclosing: Throwable) {
-        // TODO: should skip common stack frames
-        print("Caused by: ")
-        this.printStackTrace()
+    private inline fun dumpStackTrace(crossinline writeln: (String) -> Unit) {
+        writeln(this@Throwable.toString())
+
+        writeStackTraceElements(this, writeln)
+
+        var cause = this.cause
+        while (cause != null) {
+            // TODO: should skip common stack frames
+            writeln("Caused by: $cause")
+            writeStackTraceElements(cause, writeln)
+            cause = cause.cause
+        }
     }
 
-    override fun toString(): String {
-        val s = "Throwable" // TODO: should be class name
+    public override fun toString(): String {
+        val kClass = this::class
+        val s = kClass.qualifiedName ?: kClass.simpleName ?: "Throwable"
         return if (message != null) s + ": " + message.toString() else s
     }
 }
 
 @SymbolName("Kotlin_getCurrentStackTrace")
-private external fun getCurrentStackTrace(): Array<String>
+private external fun getCurrentStackTrace(): NativePtrArray
+
+@SymbolName("Kotlin_getStackTraceStrings")
+private external fun getStackTraceStrings(stackTrace: NativePtrArray): Array<String>

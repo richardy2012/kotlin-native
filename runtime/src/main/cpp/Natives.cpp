@@ -20,7 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "Assert.h"
+#include "KAssert.h"
 #include "Exceptions.h"
 #include "Memory.h"
 #include "Natives.h"
@@ -39,12 +39,12 @@ KInt Kotlin_Any_hashCode(KConstRef thiz) {
   return reinterpret_cast<uintptr_t>(thiz);
 }
 
-OBJ_GETTER0(Kotlin_getCurrentStackTrace) {
-  RETURN_RESULT_OF0(GetCurrentStackTrace);
+OBJ_GETTER(Kotlin_getStackTraceStrings, KConstRef stackTrace) {
+  RETURN_RESULT_OF(GetStackTraceStrings, stackTrace);
 }
 
 // TODO: consider handling it with compiler magic instead.
-OBJ_GETTER0(Kotlin_konan_internal_undefined) {
+OBJ_GETTER0(Kotlin_native_internal_undefined) {
   RETURN_OBJ(nullptr);
 }
 
@@ -53,7 +53,7 @@ void* Kotlin_interop_malloc(KLong size, KInt align) {
     return nullptr;
   }
 
-  void* result = malloc(size);
+  void* result = konan::calloc(1, size);
   if ((reinterpret_cast<uintptr_t>(result) & (align - 1)) != 0) {
     // Unaligned!
     RuntimeAssert(false, "unsupported alignment");
@@ -63,7 +63,19 @@ void* Kotlin_interop_malloc(KLong size, KInt align) {
 }
 
 void Kotlin_interop_free(void* ptr) {
-  free(ptr);
+  konan::free(ptr);
+}
+
+void Kotlin_system_exitProcess(KInt status) {
+  konan::exit(status);
+}
+
+const void* Kotlin_Any_getTypeInfo(KConstRef obj) {
+  return obj->type_info();
+}
+
+void Kotlin_CPointer_CopyMemory(KNativePtr to, KNativePtr from, KInt count) {
+  memcpy(to, from, count);
 }
 
 }  // extern "C"

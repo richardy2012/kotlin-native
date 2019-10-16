@@ -1,55 +1,38 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
 package org.jetbrains.kotlin.cli.utilities
 
-import org.jetbrains.kotlin.backend.konan.util.File
+import org.jetbrains.kotlin.native.interop.gen.defFileDependencies
 import org.jetbrains.kotlin.cli.bc.main as konancMain
-import org.jetbrains.kotlin.native.interop.gen.jvm.main as cinteropMain
 import org.jetbrains.kotlin.cli.klib.main as klibMain
+import org.jetbrains.kotlin.cli.bc.mainNoExit as konancMainNoExit
 
-fun invokeCinterop(args: Array<String>) {
-    var outputFileName = "nativelib"
-    var target = "host"
-    for (i in args.indices) {
-        if (args[i].startsWith("-o")) 
-            outputFileName = args.getOrElse(i+1){outputFileName}
-        if (args[i] == "-target") 
-            target = args.getOrElse(i+1){target}
-    }
-
-    val buildDir = File("$outputFileName-build")
-    val generatedDir = File(buildDir, "kotlin")
-    val nativesDir = File(buildDir, "natives")
-    val cstubsName ="cstubs"
-
-    val additionalArgs = listOf<String>(
-        "-generated", generatedDir.path, 
-        "-natives", nativesDir.path, 
-        "-cstubsname", cstubsName,
-        "-flavor", "native")
-
-    val cinteropArgs = (additionalArgs + args.toList()).toTypedArray()
-    cinteropMain(cinteropArgs)
-
-    val konancArgs = arrayOf(
-        generatedDir.path, 
-        "-produce", "library", 
-        "-nativelibrary", File(nativesDir, "$cstubsName.bc").path,
-        "-o", outputFileName,
-        "-target", target)
-    konancMain(konancArgs)
-}
-
-fun main(args: Array<String>) {
+private fun mainImpl(args: Array<String>, konancMain: (Array<String>) -> Unit) {
     val utilityName = args[0]
     val utilityArgs = args.drop(1).toTypedArray()
     when (utilityName) {
         "konanc" ->
             konancMain(utilityArgs)
-        "cinterop" ->
-            invokeCinterop(utilityArgs)
+        "cinterop" -> {
+            val konancArgs = invokeInterop("native", utilityArgs)
+            konancArgs?.let { konancMain(it) }
+        }
+        "jsinterop" -> {
+            val konancArgs = invokeInterop("wasm", utilityArgs)
+            konancArgs?.let { konancMain(it) }
+        }
         "klib" ->
             klibMain(utilityArgs)
+        "defFileDependencies" ->
+            defFileDependencies(utilityArgs)
         else ->
             error("Unexpected utility name")
     }
 }
+
+fun main(args: Array<String>) = mainImpl(args, ::konancMain)
+
+fun daemonMain(args: Array<String>) = mainImpl(args, ::konancMainNoExit)
 

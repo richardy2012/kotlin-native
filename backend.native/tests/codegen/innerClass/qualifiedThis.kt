@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.innerClass.qualifiedThis
+
+import kotlin.test.*
+
 open class ABase
 {
     open fun zzz() = "a_base"
@@ -41,6 +50,6 @@ class A: ABase() { // implicit label @A
 
 fun box() = A().B().bar(D())
 
-fun main(args : Array<String>) {
+@Test fun runTest() {
     println(box())
 }

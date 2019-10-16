@@ -17,12 +17,13 @@
 
 #include <string.h>
 #include <math.h>
-#include "cbigint.h"
-#include "../Natives.h"
-#include "../Exceptions.h"
-#include "../utf8.h"
 #include <stdlib.h>
-#include <string>
+
+#include "cbigint.h"
+#include "../Exceptions.h"
+#include "../KString.h"
+#include "../Natives.h"
+#include "../utf8.h"
 
 #if defined(LINUX) || defined(FREEBSD) || defined(ZOS) || defined(MACOSX) || defined(AIX)
 #define USE_LL
@@ -38,9 +39,9 @@
 #define DEFAULT_WIDTH MAX_ACCURACY_WIDTH
 
 extern "C" {
-KDouble Konan_FloatingPointParser_parseDoubleImpl (KString s, KInt e);
+KDouble Kotlin_native_FloatingPointParser_parseDoubleImpl (KString s, KInt e);
 
-void Konan_NumberConverter_bigIntDigitGeneratorInstImpl (KRef results,
+void Kotlin_native_NumberConverter_bigIntDigitGeneratorInstImpl (KRef results,
                                                          KRef uArray,
                                                          KLong f,
                                                          KInt e,
@@ -48,16 +49,16 @@ void Konan_NumberConverter_bigIntDigitGeneratorInstImpl (KRef results,
                                                          KBoolean mantissaIsZero,
                                                          KInt p);
 
-KDouble Konan_NumberConverter_ceil(KDouble x) {
+KDouble Kotlin_native_NumberConverter_ceil(KDouble x) {
   return ceil(x);
 }
 
 void Kotlin_IntArray_set(KRef thiz, KInt index, KInt value);
 
-KDouble Konan_long_bits_to_double(KLong x);
+KDouble Kotlin_native_long_bits_to_double(KLong x);
 }
 
-KDouble Konan_long_bits_to_double(KLong x) {
+KDouble Kotlin_native_long_bits_to_double(KLong x) {
   union {
     int64_t x;
     double d;
@@ -145,35 +146,35 @@ static const KDouble tens[] = {
  * than twice.
  */
 #define INCREMENT_DOUBLE(_x, _decCount, _incCount) \
-	{ \
-		++DOUBLE_TO_LONGBITS(_x); \
-		_incCount++; \
-		if( (_incCount > 2) && (_decCount > 2) ) { \
-			if( _decCount > _incCount ) { \
-				DOUBLE_TO_LONGBITS(_x) += _decCount - _incCount; \
-			} else if( _incCount > _decCount ) { \
-				DOUBLE_TO_LONGBITS(_x) -= _incCount - _decCount; \
-			} \
-			break; \
-		} \
-	}
+        { \
+                ++DOUBLE_TO_LONGBITS(_x); \
+                _incCount++; \
+                if( (_incCount > 2) && (_decCount > 2) ) { \
+                        if( _decCount > _incCount ) { \
+                                DOUBLE_TO_LONGBITS(_x) += _decCount - _incCount; \
+                        } else if( _incCount > _decCount ) { \
+                                DOUBLE_TO_LONGBITS(_x) -= _incCount - _decCount; \
+                        } \
+                        break; \
+                } \
+        }
 #define DECREMENT_DOUBLE(_x, _decCount, _incCount) \
-	{ \
-		--DOUBLE_TO_LONGBITS(_x); \
-		_decCount++; \
-		if( (_incCount > 2) && (_decCount > 2) ) { \
-			if( _decCount > _incCount ) { \
-				DOUBLE_TO_LONGBITS(_x) += _decCount - _incCount; \
-			} else if( _incCount > _decCount ) { \
-				DOUBLE_TO_LONGBITS(_x) -= _incCount - _decCount; \
-			} \
-			break; \
-		} \
-	}
+        { \
+                --DOUBLE_TO_LONGBITS(_x); \
+                _decCount++; \
+                if( (_incCount > 2) && (_decCount > 2) ) { \
+                        if( _decCount > _incCount ) { \
+                                DOUBLE_TO_LONGBITS(_x) += _decCount - _incCount; \
+                        } else if( _incCount > _decCount ) { \
+                                DOUBLE_TO_LONGBITS(_x) -= _incCount - _decCount; \
+                        } \
+                        break; \
+                } \
+        }
 #define ERROR_OCCURED(x) (HIGH_I32_FROM_VAR(x) < 0)
 
-#define allocateU64(x, n) if (!((x) = (U_64*) malloc((n) * sizeof(U_64)))) goto OutOfMemory;
-#define release(r) if ((r)) free((r));
+#define allocateU64(x, n) if (!((x) = (U_64*) konan::calloc(1, (n) * sizeof(U_64)))) goto OutOfMemory;
+#define release(r) if ((r)) konan::free((r));
 
 /*NB the Number converter methods are synchronized so it is possible to
  *have global data for use by bigIntDigitGenerator */
@@ -637,11 +638,13 @@ OutOfMemory:
 #pragma optimize("",on)         /*restore optimizations */
 #endif
 
-KDouble Konan_FloatingPointParser_parseDoubleImpl (KString s, KInt e)
+KDouble Kotlin_native_FloatingPointParser_parseDoubleImpl (KString s, KInt e)
 {
   const KChar* utf16 = CharArrayAddressOfElementAt(s, 0);
-  std::string utf8;
-  utf8::utf16to8(utf16, utf16 + s->count_, back_inserter(utf8));
+  KStdString utf8;
+  TRY_CATCH(utf8::utf16to8(utf16, utf16 + s->count_, back_inserter(utf8)),
+            utf8::unchecked::utf16to8(utf16, utf16 + s->count_, back_inserter(utf8)),
+            /* Illegal UTF-16 string. */ ThrowNumberFormatException());
   const char *str = utf8.c_str();
   auto dbl = createDouble (str, e);
 
@@ -688,7 +691,7 @@ KDouble Konan_FloatingPointParser_parseDoubleImpl (KString s, KInt e)
  *           1.2341234124312331E107
  *
  */
-void Konan_NumberConverter_bigIntDigitGeneratorInstImpl (KRef results,
+void Kotlin_native_NumberConverter_bigIntDigitGeneratorInstImpl (KRef results,
                                                          KRef uArray,
                                                          KLong f,
                                                          KInt e,

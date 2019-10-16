@@ -1,5 +1,0 @@
-headers.osx = OpenGL/gl.h OpenGL/glu.h GLUT/glut.h
-headers.linux = GL/glut.h
-compilerOpts.osx = -framework OpenGL -framework GLUT
-compilerOpts.linux = -I/usr/include
-excludeDependentModules.osx = true

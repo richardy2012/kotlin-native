@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.inline.inline15
+
+import kotlin.test.*
+
 @Suppress("NOTHING_TO_INLINE")
 inline fun foo2(i1: Int): Int {
     return i1 + 1
@@ -12,6 +21,6 @@ fun bar(i0: Int): Int {
     return foo1(i0) { foo2(it) + 1 }
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     println(bar(2).toString())
 }

@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package runtime.collections.BitSet
+
+import kotlin.test.*
+
 fun assertContainsOnly(bitSet: BitSet, trueBits: Set<Int>, size: Int) {
     for (i in 0 until size) {
         val expectedBit = i in trueBits
@@ -437,7 +446,7 @@ fun testEqualsHashCode() {
     assertTrue("Different sized BitSet with higher bits not set returned false", b1 == b3)
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     testConstructor()
     testSet()
     testFlip()

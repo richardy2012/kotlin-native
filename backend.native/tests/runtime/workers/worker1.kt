@@ -1,12 +1,21 @@
-import konan.worker.*
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
 
-fun main(args: Array<String>) {
+package runtime.workers.worker1
+
+import kotlin.test.*
+
+import kotlin.native.concurrent.*
+
+@Test fun runTest() {
     val COUNT = 5
-    val workers = Array(COUNT, { _ -> startWorker()})
+    val workers = Array(COUNT, { _ -> Worker.start()})
 
     for (attempt in 1 .. 3) {
         val futures = Array(workers.size,
-                { i -> workers[i].schedule(TransferMode.CHECKED, { "$attempt: Input $i".shallowCopy() })
+                { i -> workers[i].execute(TransferMode.SAFE, { "$attempt: Input $i" })
                 { input -> input + " processed" }
         })
         futures.forEachIndexed { index, future ->
@@ -20,7 +29,7 @@ fun main(args: Array<String>) {
         }
     }
     workers.forEach {
-        it.requestTermination().consume { _ -> }
+        it.requestTermination().result
     }
     println("OK")
 }

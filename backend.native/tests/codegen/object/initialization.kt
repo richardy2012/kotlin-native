@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.`object`.initialization
+
+import kotlin.test.*
+
 open class A(val a:Int, val b:Int)
 
 open class B(val c:Int, d:Int):A(c, d)
@@ -19,6 +28,6 @@ fun foo(i:Int, j:Int):Int {
    return c.c
 }
 
-fun main(args:Array<String>) {
+@Test fun runTest() {
    if (foo(2, 3) != 5) throw Error()
 }

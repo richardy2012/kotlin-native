@@ -1,122 +1,248 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.cli.bc
 
 import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.Argument
+import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.config.AnalysisFlag
+import org.jetbrains.kotlin.config.AnalysisFlags
 
 class K2NativeCompilerArguments : CommonCompilerArguments() {
     // First go the options interesting to the general public.
     // Prepend them with a single dash.
     // Keep the list lexically sorted.
 
-    @field:Argument(value = "-g", description = "Enable emitting debug information")
-    @JvmField var debug: Boolean = false
+    @Argument(value = "-enable-assertions", deprecatedName = "-enable_assertions", shortName = "-ea", description = "Enable runtime assertions in generated code")
+    var enableAssertions: Boolean = false
 
-    @field:Argument(value = "-enable_assertions", shortName = "-ea", description = "Enable runtime assertions in generated code")
-    @JvmField var enableAssertions: Boolean = false
+    @Argument(value = "-g", description = "Enable emitting debug information")
+    var debug: Boolean = false
 
-    @field:Argument(value = "-library", shortName = "-l", valueDescription = "<path>", description = "Link with the library")
-    @JvmField var libraries: Array<String>? = null
+    @Argument(value = "-generate-test-runner", deprecatedName = "-generate_test_runner",
+            shortName = "-tr", description = "Produce a runner for unit tests")
+    var generateTestRunner = false
+    @Argument(value = "-generate-worker-test-runner",
+            shortName = "-trw", description = "Produce a worker runner for unit tests")
+    var generateWorkerTestRunner = false
+    @Argument(value = "-generate-no-exit-test-runner",
+            shortName = "-trn", description = "Produce a runner for unit tests not forcing exit")
+    var generateNoExitTestRunner = false
 
-    @field:Argument(value = "-list_targets", description = "List available hardware targets")
-    @JvmField var listTargets: Boolean = false
+    @Argument(value="-include-binary", deprecatedName = "-includeBinary", shortName = "-ib", valueDescription = "<path>", description = "Pack external binary within the klib")
+    var includeBinaries: Array<String>? = null
 
-    @field:Argument(value = "-nativelibrary", shortName = "-nl", valueDescription = "<path>", description = "Include the native library")
-    @JvmField var nativeLibraries: Array<String>? = null
+    @Argument(value = "-library", shortName = "-l", valueDescription = "<path>", description = "Link with the library", delimiter = "")
+    var libraries: Array<String>? = null
 
-    @field:Argument(value = "-nomain", description = "Assume 'main' entry point to be provided by external libraries")
-    @JvmField var nomain: Boolean = false
+    @Argument(value = "-library-version", shortName = "-lv", valueDescription = "<version>", description = "Set library version")
+    var libraryVersion: String? = null
 
-    @field:Argument(value = "-nopack", description = "Don't pack the library into a klib file")
-    @JvmField var nopack: Boolean = false
+    @Argument(value = "-list-targets", deprecatedName = "-list_targets", description = "List available hardware targets")
+    var listTargets: Boolean = false
 
-    @field:Argument(value = "-linkerOpts", valueDescription = "<arg>", description = "Pass arguments to linker", delimiter = " ")
-    @JvmField var linkerArguments: Array<String>? = null
+    @Argument(value = "-manifest", valueDescription = "<path>", description = "Provide a maniferst addend file")
+    var manifestFile: String? = null
 
-    @field:Argument(value = "-nostdlib", description = "Don't link with stdlib")
-    @JvmField var nostdlib: Boolean = false
+    @Argument(value="-memory-model", valueDescription = "<model>", description = "Memory model to use, 'strict' and 'relaxed' are currently supported")
+    var memoryModel: String? = "strict"
 
-    @field:Argument(value = "-opt", description = "Enable optimizations during compilation")
-    @JvmField var optimization: Boolean = false
+    @Argument(value="-module-name", deprecatedName = "-module_name", valueDescription = "<name>", description = "Specify a name for the compilation module")
+    var moduleName: String? = null
 
-    @field:Argument(value = "-output", shortName = "-o", valueDescription = "<name>", description = "Output name")
-    @JvmField var outputName: String? = null
+    @Argument(value = "-native-library", deprecatedName = "-nativelibrary", shortName = "-nl",
+            valueDescription = "<path>", description = "Include the native bitcode library", delimiter = "")
+    var nativeLibraries: Array<String>? = null
 
-    @field:Argument(value = "-entry", shortName = "-e", valueDescription = "<name>", description = "Qualified entry point name")
-    @JvmField var mainPackage: String? = null
+    @Argument(value = "-no-default-libs", deprecatedName = "-nodefaultlibs", description = "Don't link the libraries from dist/klib automatically")
+    var nodefaultlibs: Boolean = false
 
-    @field:Argument(value = "-produce", shortName = "-p", valueDescription = "{program|library|bitcode}", description = "Specify output file kind")
-    @JvmField var produce: String? = null
+    @Argument(value = "-no-endorsed-libs", description = "Don't link the endorsed libraries from dist automatically")
+    var noendorsedlibs: Boolean = false
 
-    @field:Argument(value = "-properties", valueDescription = "<path>", description = "Override standard 'konan.properties' location")
-    @JvmField var propertyFile: String? = null
+    @Argument(value = "-nomain", description = "Assume 'main' entry point to be provided by external libraries")
+    var nomain: Boolean = false
 
-    @field:Argument(value = "-repo", shortName = "-r", valueDescription = "<path>", description = "Library search path")
-    @JvmField var repositories: Array<String>? = null
+    @Argument(value = "-nopack", description = "Don't pack the library into a klib file")
+    var nopack: Boolean = false
 
-    @field:Argument(value = "-runtime", valueDescription = "<path>", description = "Override standard 'runtime.bc' location")
-    @JvmField var runtimeFile: String? = null
+    @Argument(value="-linker-options", deprecatedName = "-linkerOpts", valueDescription = "<arg>", description = "Pass arguments to linker", delimiter = " ")
+    var linkerArguments: Array<String>? = null
 
-    @field:Argument(value = "-target", valueDescription = "<target>", description = "Set hardware target")
-    @JvmField var target: String? = null
+    @Argument(value="-linker-option", valueDescription = "<arg>", description = "Pass argument to linker", delimiter = "")
+    var singleLinkerArguments: Array<String>? = null
+
+    @Argument(value = "-nostdlib", description = "Don't link with stdlib")
+    var nostdlib: Boolean = false
+
+    @Argument(value = "-opt", description = "Enable optimizations during compilation")
+    var optimization: Boolean = false
+
+    @Argument(value = "-output", shortName = "-o", valueDescription = "<name>", description = "Output name")
+    var outputName: String? = null
+
+    @Argument(value = "-entry", shortName = "-e", valueDescription = "<name>", description = "Qualified entry point name")
+    var mainPackage: String? = null
+
+    @Argument(value = "-produce", shortName = "-p",
+            valueDescription = "{program|static|dynamic|framework|library|bitcode}",
+            description = "Specify output file kind")
+    var produce: String? = null
+
+    @Argument(value = "-repo", shortName = "-r", valueDescription = "<path>", description = "Library search path")
+    var repositories: Array<String>? = null
+
+    @Argument(value = "-target", valueDescription = "<target>", description = "Set hardware target")
+    var target: String? = null
 
     // The rest of the options are only interesting to the developers.
-    // Make sure to prepend them with a double dash.
+    // Make sure to prepend them with -X.
     // Keep the list lexically sorted.
 
-    @field:Argument(value = "--enable", valueDescription = "<Phase>", description = "Enable backend phase")
-    @JvmField var enablePhases: Array<String>? = null
+    @Argument(
+            value = "-Xcache-directory",
+            valueDescription = "<path>",
+            description = "Path to the directory containing caches",
+            delimiter = ""
+    )
+    var cacheDirectories: Array<String>? = null
 
-    @field:Argument(value = "--disable", valueDescription = "<Phase>", description = "Disable backend phase")
-    @JvmField var disablePhases: Array<String>? = null
+    @Argument(
+            value = CACHED_LIBRARY,
+            valueDescription = "<library path>,<cache path>",
+            description = "Comma-separated paths of a library and its cache",
+            delimiter = ""
+    )
+    var cachedLibraries: Array<String>? = null
 
-    @field:Argument(value = "--list_phases", description = "List all backend phases")
-    @JvmField var listPhases: Boolean = false
+    @Argument(value="-Xcheck-dependencies", deprecatedName = "--check_dependencies", description = "Check dependencies and download the missing ones")
+    var checkDependencies: Boolean = false
 
-    @field:Argument(value = "--print_bitcode", description = "Print llvm bitcode")
-    @JvmField var printBitCode: Boolean = false
+    @Argument(value="-Xcompatible-compiler-version", valueDescription = "<version>", description = "Assume the given compiler version to be binary compatible")
+    var compatibleCompilerVersions: Array<String>? = null
 
-    @field:Argument(value = "--print_descriptors", description = "Print descriptor tree")
-    @JvmField var printDescriptors: Boolean = false
+    @Argument(value = EMBED_BITCODE_FLAG, description = "Embed LLVM IR bitcode as data")
+    var embedBitcode: Boolean = false
 
-    @field:Argument(value = "--print_ir", description = "Print IR")
-    @JvmField var printIr: Boolean = false
+    @Argument(value = EMBED_BITCODE_MARKER_FLAG, description = "Embed placeholder LLVM IR data as a marker")
+    var embedBitcodeMarker: Boolean = false
 
-    @field:Argument(value = "--print_ir_with_descriptors", description = "Print IR with descriptors")
-    @JvmField var printIrWithDescriptors: Boolean = false
+    @Argument(value = "-Xemit-lazy-objc-header", description = "")
+    var emitLazyObjCHeader: String? = null
 
-    @field:Argument(value = "--print_locations", description = "Print locations")
-    @JvmField var printLocations: Boolean = false
+    @Argument(value = "-Xenable", deprecatedName = "--enable", valueDescription = "<Phase>", description = "Enable backend phase")
+    var enablePhases: Array<String>? = null
 
-    @field:Argument(value = "--time", description = "Report execution time for compiler phases")
-    @JvmField var timePhases: Boolean = false
+    @Argument(
+            value = "-Xexport-library",
+            valueDescription = "<path>",
+            description = "A library to be included into produced framework API.\n" +
+                    "Must be one of libraries passed with '-library'",
+            delimiter = ""
+    )
+    var exportedLibraries: Array<String>? = null
 
-    @field:Argument(value = "--verbose", valueDescription = "<Phase>", description = "Trace phase execution")
-    @JvmField var verbosePhases: Array<String>? = null
+    @Argument(
+            value = "-Xframework-import-header",
+            valueDescription = "<header>",
+            description = "Add additional header import to framework header"
+    )
+    var frameworkImportHeaders: Array<String>? = null
 
-    @field:Argument(value = "--verify_bitcode", description = "Verify llvm bitcode after each method")
-    @JvmField var verifyBitCode: Boolean = false
+    @Argument(value = "-Xg0", description = "Add light debug information")
+    var lightDebug: Boolean = false
 
-    @field:Argument(value = "--verify_descriptors", description = "Verify descriptor tree")
-    @JvmField var verifyDescriptors: Boolean = false
+    @Argument(
+            value = MAKE_CACHE,
+            valueDescription = "<path>",
+            description = "Path of the library to be compiled to cache",
+            delimiter = ""
+    )
+    var librariesToCache: Array<String>? = null
 
-    @field:Argument(value = "--verify_ir", description = "Verify IR")
-    @JvmField var verifyIr: Boolean = false
+    @Argument(value = "-Xprint-bitcode", deprecatedName = "--print_bitcode", description = "Print llvm bitcode")
+    var printBitCode: Boolean = false
 
+    @Argument(value = "-Xprint-descriptors", deprecatedName = "--print_descriptors", description = "Print descriptor tree")
+    var printDescriptors: Boolean = false
+
+    @Argument(value = "-Xprint-ir", deprecatedName = "--print_ir", description = "Print IR")
+    var printIr: Boolean = false
+
+    @Argument(value = "-Xprint-ir-with-descriptors", deprecatedName = "--print_ir_with_descriptors", description = "Print IR with descriptors")
+    var printIrWithDescriptors: Boolean = false
+
+    @Argument(value = "-Xprint-locations", deprecatedName = "--print_locations", description = "Print locations")
+    var printLocations: Boolean = false
+
+    @Argument(value="-Xpurge-user-libs", deprecatedName = "--purge_user_libs", description = "Don't link unused libraries even explicitly specified")
+    var purgeUserLibs: Boolean = false
+
+    @Argument(value = "-Xruntime", deprecatedName = "--runtime", valueDescription = "<path>", description = "Override standard 'runtime.bc' location")
+    var runtimeFile: String? = null
+
+    @Argument(
+        value = INCLUDE_ARG,
+        valueDescription = "<path>",
+        description = "A path to an intermediate library that should be processed in the same manner as source files.\n"
+    )
+    var includes: Array<String>? = null
+
+    @Argument(value = STATIC_FRAMEWORK_FLAG, description = "Create a framework with a static library instead of a dynamic one")
+    var staticFramework: Boolean = false
+
+    @Argument(value = "-Xtemporary-files-dir", deprecatedName = "--temporary_files_dir", valueDescription = "<path>", description = "Save temporary files to the given directory")
+    var temporaryFilesDir: String? = null
+
+    @Argument(value = "-Xverify-bitcode", deprecatedName = "--verify_bitcode", description = "Verify llvm bitcode after each method")
+    var verifyBitCode: Boolean = false
+
+    @Argument(value = "-Xverify-compiler", description = "Verify compiler")
+    var verifyCompiler: String? = null
+
+    @Argument(
+            value = "-friend-modules",
+            valueDescription = "<path>",
+            description = "Paths to friend modules"
+    )
+    var friendModules: String? = null
+
+    @Argument(value = "-Xdebug-info-version", description = "generate debug info of given version (1, 2)")
+    var debugInfoFormatVersion: String = "1" /* command line parser doesn't accept kotlin.Int type */
+
+    @Argument(value = "-Xcoverage", description = "emit coverage")
+    var coverage: Boolean = false
+
+    @Argument(
+            value = "-Xlibrary-to-cover",
+            valueDescription = "<path>",
+            description = "Provide code coverage for the given library.\n" +
+                    "Must be one of libraries passed with '-library'",
+            delimiter = ""
+    )
+    var coveredLibraries: Array<String>? = null
+
+    @Argument(value = "-Xcoverage-file", valueDescription = "<path>", description = "Save coverage information to the given file")
+    var coverageFile: String? = null
+
+    @Argument(value = "-Xobjc-generics", description = "Enable experimental generics support for framework header")
+    var objcGenerics: Boolean = false
+
+    override fun configureAnalysisFlags(collector: MessageCollector): MutableMap<AnalysisFlag<*>, Any> =
+            super.configureAnalysisFlags(collector).also {
+                val useExperimental = it[AnalysisFlags.useExperimental] as List<*>
+                it[AnalysisFlags.useExperimental] = useExperimental + listOf("kotlin.ExperimentalUnsignedTypes")
+                if (printIr)
+                    phasesToDumpAfter = arrayOf("ALL")
+            }
 }
 
+const val EMBED_BITCODE_FLAG = "-Xembed-bitcode"
+const val EMBED_BITCODE_MARKER_FLAG = "-Xembed-bitcode-marker"
+const val STATIC_FRAMEWORK_FLAG = "-Xstatic-framework"
+const val INCLUDE_ARG = "-Xinclude"
+const val CACHED_LIBRARY = "-Xcached-library"
+const val MAKE_CACHE = "-Xmake-cache"

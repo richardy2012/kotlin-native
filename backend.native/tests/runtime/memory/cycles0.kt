@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package runtime.memory.cycles0
+
+import kotlin.test.*
+
 data class Node(val data: Int, var next: Node?, var prev: Node?, val outer: Node?)
 
 fun makeCycle(len: Int, outer: Node?): Node {
@@ -35,11 +44,11 @@ fun createCycles(junk: Node) {
 
 }
 
-fun main(args : Array<String>) {
+@Test fun runTest() {
     // Create outer link from cyclic garbage.
     val outer = Node(42, null, null, null)
     createCycles(outer)
-    konan.internal.GC.collect()
+    kotlin.native.internal.GC.collect()
     // Ensure outer is not collected.
     println(outer.data)
 }

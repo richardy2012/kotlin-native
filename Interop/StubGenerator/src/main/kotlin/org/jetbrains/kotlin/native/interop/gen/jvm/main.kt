@@ -16,113 +16,39 @@
 
 package org.jetbrains.kotlin.native.interop.gen.jvm
 
+import org.jetbrains.kotlin.konan.TempFiles
+import org.jetbrains.kotlin.konan.exec.Command
+import org.jetbrains.kotlin.konan.util.DefFile
+import org.jetbrains.kotlin.native.interop.gen.*
+import org.jetbrains.kotlin.native.interop.gen.wasm.processIdlLib
 import org.jetbrains.kotlin.native.interop.indexer.*
+import org.jetbrains.kotlin.native.interop.tool.*
+import kotlinx.cli.ArgParser
+import org.jetbrains.kotlin.konan.target.KonanTarget
 import java.io.File
-import java.io.StringReader
 import java.lang.IllegalArgumentException
+import java.nio.file.*
 import java.util.*
-import kotlin.reflect.KFunction
 
 fun main(args: Array<String>) {
-    val konanHome = File(System.getProperty("konan.home")).absolutePath
-
-    val substitutions = mapOf(
-            "arch" to (System.getenv("TARGET_ARCH") ?: "x86-64"),
-            "os" to (System.getenv("TARGET_OS") ?: host)
-    )
-
-    processLib(konanHome, substitutions, parseArgs(args))
+    processCLib(args)
 }
 
+fun interop(flavor: String, args: Array<String>, additionalArgs: Map<String, Any> = mapOf()) =
+        when(flavor) {
+            "jvm", "native" -> processCLib(args, additionalArgs)
+            "wasm" -> processIdlLib(args, additionalArgs)
+            else -> error("Unexpected flavor")
+        }
+
 // Options, whose values are space-separated and can be escaped.
-val escapedOptions = setOf("-compilerOpts", "-linkerOpts")
+val escapedOptions = setOf("-compilerOpts", "-linkerOpts", "-compiler-options", "-linker-options")
 
 private fun String.asArgList(key: String) =
         if (escapedOptions.contains(key))
             this.split(Regex("(?<!\\\\)\\Q \\E")).filter { it.isNotEmpty() }.map { it.replace("\\ ", " ") }
         else
             listOf(this)
-
-private fun parseArgs(args: Array<String>): Map<String, List<String>> {
-    val commandLine = mutableMapOf<String, MutableList<String>>()
-    for (index in 0..args.size - 1 step 2) {
-        val key = args[index]
-        if (key[0] != '-') {
-            throw IllegalArgumentException("Expected a flag with initial dash: $key")
-        }
-        if (index + 1 == args.size) {
-            throw IllegalArgumentException("Expected an value after $key")
-        }
-        val value = args[index + 1].asArgList(key)
-        commandLine[key]?.addAll(value) ?: commandLine.put(key, value.toMutableList())
-    }
-    return commandLine
-}
-
-private val host: String by lazy {
-    val os = System.getProperty("os.name")
-    when {
-        os == "Linux" -> "linux"
-        os.startsWith("Windows") -> "mingw"
-        os == "Mac OS X" -> "osx"
-        os == "FreeBSD" -> "freebsd"
-        else -> {
-            throw IllegalArgumentException("we don't know ${os} value")
-        }
-    }
-}
-
-private val defaultTarget: String by lazy {
-    host
-}
-
-// TODO: share KonanTarget class here.
-private val knownTargets = mapOf(
-        "host" to host,
-        "linux" to "linux",
-        "macbook" to "osx",
-        "osx" to "osx",
-        "iphone" to "ios",
-        "ios" to "ios",
-        "iphone_sim" to "ios_sim",
-        "ios_sim" to "ios_sim",
-        "raspberrypi" to "raspberrypi",
-        "android_arm32" to "android_arm32",
-        "android_arm64" to "android_arm64",
-        "mingw" to "mingw"
-)
-
-
-private fun String.targetSuffix(): String =
-        knownTargets[this] ?: error("Unsupported target $this.")
-
-// Performs substitution similar to:
-//  foo = ${foo} ${foo.${arch}} ${foo.${os}}
-private fun substitute(properties: Properties, substitutions: Map<String, String>) {
-    for (key in properties.stringPropertyNames()) {
-        for (substitution in substitutions.values) {
-            val suffix = ".$substitution"
-            if (key.endsWith(suffix)) {
-                val baseKey = key.removeSuffix(suffix)
-                val oldValue = properties.getProperty(baseKey, "")
-                val appendedValue = properties.getProperty(key, "")
-                val newValue = if (oldValue != "") "$oldValue $appendedValue" else appendedValue
-                properties.setProperty(baseKey, newValue)
-            }
-        }
-    }
-}
-
-private fun ProcessBuilder.runExpectingSuccess() {
-    val res = this.start().waitFor()
-    if (res != 0) {
-        throw Error("Process finished with non-zero exit code: $res")
-    }
-}
-
-private fun Properties.getSpaceSeparated(name: String): List<String> {
-    return this.getProperty(name)?.split(' ')?.filter { it.isNotEmpty() } ?: emptyList()
-}
 
 private fun <T> Collection<T>.atMostOne(): T? {
     return when (this.size) {
@@ -132,231 +58,151 @@ private fun <T> Collection<T>.atMostOne(): T? {
     }
 }
 
-private fun String.matchesToGlob(glob: String): Boolean =
-        java.nio.file.FileSystems.getDefault()
-                .getPathMatcher("glob:$glob").matches(java.nio.file.Paths.get(this))
-
-private fun Properties.getHostSpecific(
-        name: String) = getProperty("$name.$host")
-
-private fun Properties.getTargetSpecific(
-        name: String, target: String) = getProperty("$name.$target")
-
-private fun Properties.getHostTargetSpecific(
-        name: String, target: String) = if (host != target)
-    getProperty("$name.$host-$target")
-else
-    getProperty("$name.$host")
-
 private fun List<String>?.isTrue(): Boolean {
     // The rightmost wins, null != "true".
     return this?.last() == "true"
 }
 
-private fun runCmd(command: Array<String>, workDir: File, verbose: Boolean = false) {
-    val builder = ProcessBuilder(*command)
-            .directory(workDir)
+private fun runCmd(command: Array<String>, verbose: Boolean = false) {
+    Command(*command).getOutputLines(true).let { lines ->
+        if (verbose) lines.forEach(::println)
+    }
+}
 
-    val logFile: File?
+private fun Properties.storeProperties(file: File) {
+    file.outputStream().use {
+        this.store(it, null)
+    }
+}
 
-    if (verbose) {
-        println(command.joinToString(" "))
-        builder.inheritIO()
-        logFile = null
-    } else {
-        logFile = createTempFile(suffix = ".log")
-        logFile.deleteOnExit()
+private fun Properties.putAndRunOnReplace(key: Any, newValue: Any, beforeReplace: (Any, Any, Any) -> Unit) {
+    val oldValue = this[key]
+    if (oldValue != null && oldValue != newValue) {
+        beforeReplace(key, oldValue, newValue)
+    }
+    this[key] = newValue
+}
 
-        builder.redirectOutput(ProcessBuilder.Redirect.to(logFile))
-                .redirectErrorStream(true)
+private fun selectNativeLanguage(config: DefFile.DefFileConfig): Language {
+    val languages = mapOf(
+            "C" to Language.C,
+            "Objective-C" to Language.OBJECTIVE_C
+    )
+
+    val language = config.language ?: return Language.C
+
+    return languages[language] ?:
+            error("Unexpected language '$language'. Possible values are: ${languages.keys.joinToString { "'$it'" }}")
+}
+
+private fun parseImports(imports: Array<String>): ImportsImpl {
+    val headerIdToPackage = imports.map { arg ->
+        val (pkg, joinedIds) = arg.split(':')
+        val ids = joinedIds.split(';')
+        ids.map { HeaderId(it) to pkg }
+    }.reversed().flatten().toMap()
+
+    return ImportsImpl(headerIdToPackage)
+}
+
+fun getCompilerFlagsForVfsOverlay(headerFilterPrefix: Array<String>, def: DefFile): List<String> {
+    val relativeToRoot = mutableMapOf<Path, Path>() // TODO: handle clashes
+
+    val filteredIncludeDirs = headerFilterPrefix .map { Paths.get(it) }
+    if (filteredIncludeDirs.isNotEmpty()) {
+        val headerFilterGlobs = def.config.headerFilter
+        if (headerFilterGlobs.isEmpty()) {
+            error("'$HEADER_FILTER_ADDITIONAL_SEARCH_PREFIX' option requires " +
+                    "'headerFilter' to be specified in .def file")
+        }
+
+        relativeToRoot += findFilesByGlobs(roots = filteredIncludeDirs, globs = headerFilterGlobs)
     }
 
-    try {
-        builder.runExpectingSuccess()
-    } catch (e: Throwable) {
-        if (!verbose) {
-            println(command.joinToString(" "))
-            logFile!!.useLines {
-                it.forEach { println(it) }
+    if (relativeToRoot.isEmpty()) {
+        return emptyList()
+    }
+
+    val virtualRoot = Paths.get(System.getProperty("java.io.tmpdir")).resolve("konanSystemInclude")
+
+    val virtualPathToReal = relativeToRoot.map { (relativePath, realRoot) ->
+        virtualRoot.resolve(relativePath) to realRoot.resolve(relativePath)
+    }.toMap()
+
+    val vfsOverlayFile = createVfsOverlayFile(virtualPathToReal)
+
+    return listOf("-I${virtualRoot.toAbsolutePath()}", "-ivfsoverlay", vfsOverlayFile.toAbsolutePath().toString())
+}
+
+private fun findFilesByGlobs(roots: List<Path>, globs: List<String>): Map<Path, Path> {
+    val relativeToRoot = mutableMapOf<Path, Path>()
+
+    val pathMatchers = globs.map { FileSystems.getDefault().getPathMatcher("glob:$it") }
+
+    roots.reversed()
+            .filter { path ->
+                return@filter when {
+                    path.toFile().exists() -> true
+                    else -> { warn("$path doesn't exist"); false }
+                }
             }
-        }
-
-        throw e
-    }
+            .forEach { root ->
+                // TODO: don't scan the entire tree, skip subdirectories according to globs.
+                Files.walk(root, FileVisitOption.FOLLOW_LINKS).forEach { path ->
+                    val relativePath = root.relativize(path)
+                    if (!Files.isDirectory(path) && pathMatchers.any { it.matches(relativePath) }) {
+                        relativeToRoot[relativePath] = root
+                    }
+                }
+            }
+    return relativeToRoot
 }
 
-private fun maybeExecuteHelper(dependenciesRoot: String, properties: Properties, dependencies: List<String>) {
-    try {
-        val kClass = Class.forName("org.jetbrains.kotlin.konan.Helper0").kotlin
-        @Suppress("UNCHECKED_CAST")
-        val ctor = kClass.constructors.single() as KFunction<Runnable>
-        val result = ctor.call(dependenciesRoot, properties, dependencies)
-        result.run()
-    } catch (notFound: ClassNotFoundException) {
-        // Just ignore, no helper.
-    } catch (e: Throwable) {
-        throw IllegalStateException("Cannot download dependencies.", e)
-    }
-}
 
-private fun Properties.defaultCompilerOpts(target: String, dependencies: String): List<String> {
-    val targetToolchainDir = getHostTargetSpecific("targetToolchain", target)!!
-    val targetToolchain = "$dependencies/$targetToolchainDir"
-    val targetSysRootDir = getTargetSpecific("targetSysRoot", target)!!
-    val targetSysRoot = "$dependencies/$targetSysRootDir"
-    val llvmHomeDir = getHostSpecific("llvmHome")!!
-    val llvmHome = "$dependencies/$llvmHomeDir"
-
-    val libclang = when (host) {
-        "mingw" -> "$llvmHome/bin/libclang.dll"
-        else -> "$llvmHome/lib/${System.mapLibraryName("clang")}"
-    }
-    System.load(libclang)
-
-    val llvmVersion = getHostSpecific("llvmVersion")!!
-
-    // StubGenerator passes the arguments to libclang which
-    // works not exactly the same way as the clang binary and
-    // (in particular) uses different default header search path.
-    // See e.g. http://lists.llvm.org/pipermail/cfe-dev/2013-November/033680.html
-    // We workaround the problem with -isystem flag below.
-    val isystem = "$llvmHome/lib/clang/$llvmVersion/include"
-    val quadruple = getTargetSpecific("quadruple", target)
-    val arch = getTargetSpecific("arch", target)
-    val archSelector = if (quadruple != null)
-        listOf("-target", quadruple) else listOf("-arch", arch!!)
-    val commonArgs = listOf("-isystem", isystem, "--sysroot=$targetSysRoot")
-    when (host) {
-        "osx" -> {
-            val osVersionMinFlag = getTargetSpecific("osVersionMinFlagClang", target)
-            val osVersionMinValue = getTargetSpecific("osVersionMin", target)
-            return archSelector + commonArgs + listOf("-B$targetToolchain/bin") +
-                    (if (osVersionMinFlag != null && osVersionMinValue != null)
-                        listOf("$osVersionMinFlag=$osVersionMinValue") else emptyList())
-        }
-        "linux" -> {
-            val libGcc = getTargetSpecific("libGcc", target)
-            val binDir = "$targetSysRoot/${libGcc ?: "bin"}"
-            return archSelector + commonArgs + listOf(
-                    "-B$binDir", "--gcc-toolchain=$targetToolchain")
-        }
-        "mingw" -> {
-            return archSelector + commonArgs + listOf("-B$targetSysRoot/bin")
-        }
-        else -> error("Unexpected target: ${target}")
-    }
-}
-
-private fun loadProperties(file: File?, substitutions: Map<String, String>): Properties {
-    val result = Properties()
-    file?.bufferedReader()?.use { reader ->
-        result.load(reader)
-    }
-    substitute(result, substitutions)
-    return result
-}
-
-private fun parseDefFile(file: File?, substitutions: Map<String, String>): Pair<Properties, List<String>> {
-    val properties = Properties()
-
-    if (file == null) {
-        return properties to emptyList()
-    }
-
-    val lines = file.readLines()
-
-    val separator = "---"
-    val separatorIndex = lines.indexOf(separator)
-
-    val propertyLines: List<String>
-    val headerLines: List<String>
-
-    if (separatorIndex != -1) {
-        propertyLines = lines.subList(0, separatorIndex)
-        headerLines = lines.subList(separatorIndex + 1, lines.size)
-    } else {
-        propertyLines = lines
-        headerLines = emptyList()
-    }
-
-    val propertiesReader = StringReader(propertyLines.joinToString(System.lineSeparator()))
-    properties.load(propertiesReader)
-    substitute(properties, substitutions)
-
-    return properties to headerLines
-}
-
-private fun usage() {
-    println("""
-Run interop tool with -def <def_file_for_lib>.def
-Following flags are supported:
-  -def <file>.def specifies library definition file
-  -compilerOpts <c compiler flags> specifies flags passed to clang
-  -linkerOpts <linker flags> specifies flags passed to linker
-  -verbose <boolean> increases verbosity
-  -shims <boolean> adds generation of shims tracing native library calls
-  -pkg <fully qualified package name> place the resulting definitions into the package
-  -h <file>.h header files to parse
-""")
-}
-
-private fun downloadDependencies(dependenciesRoot: String, target: String, konanProperties: Properties) {
-    val dependencyList = konanProperties.getHostTargetSpecific("dependencies", target)?.split(' ') ?: listOf<String>()
-    maybeExecuteHelper(dependenciesRoot, konanProperties, dependencyList)
-}
-
-private fun processLib(konanHome: String,
-                       substitutions: Map<String, String>,
-                       args: Map<String, List<String>>) {
-
-    val userDir = System.getProperty("user.dir")
-    val ktGenRoot = args["-generated"]?.single() ?: userDir
-    val nativeLibsDir = args["-natives"]?.single() ?: userDir
-    val flavorName = args["-flavor"]?.single() ?: "jvm"
+private fun processCLib(args: Array<String>, additionalArgs: Map<String, Any> = mapOf()): Array<String> {
+    val cinteropArguments = CInteropArguments()
+    cinteropArguments.argParser.parse(args)
+    val ktGenRoot = cinteropArguments.generated
+    val nativeLibsDir = cinteropArguments.natives
+    val flavorName = cinteropArguments.flavor
     val flavor = KotlinPlatform.values().single { it.name.equals(flavorName, ignoreCase = true) }
-    val target = args["-target"]?.single()?.targetSuffix() ?: defaultTarget
-    val defFile = args["-def"]?.single()?.let { File(it) }
+    val defFile = cinteropArguments.def?.let { File(it) }
+    val manifestAddend = (additionalArgs["manifest"] as? String)?.let { File(it) }
 
-    if (defFile == null && args["-pkg"] == null) {
-        usage()
-        return
+    if (defFile == null && cinteropArguments.pkg == null) {
+        cinteropArguments.argParser.printError("-def or -pkg should provided!")
     }
 
-    val (config, defHeaderLines) = parseDefFile(defFile, substitutions)
+    val tool = prepareTool(cinteropArguments.target, flavor)
 
-    val konanFileName = args["-properties"]?.single() ?:
-            "${konanHome}/konan/konan.properties"
-    val konanFile = File(konanFileName)
-    val konanProperties = loadProperties(konanFile, mapOf())
-    val dependencies = "$konanHome/dependencies"
-    downloadDependencies(dependencies, target, konanProperties)
+    val def = DefFile(defFile, tool.substitutions)
+    val isLinkerOptsSetByUser = (cinteropArguments.linkerOpts.valueOrigin == ArgParser.ValueOrigin.SET_BY_USER) ||
+            (cinteropArguments.linkerOptions.valueOrigin == ArgParser.ValueOrigin.SET_BY_USER) ||
+            (cinteropArguments.linkerOption.valueOrigin == ArgParser.ValueOrigin.SET_BY_USER)
+    if (flavorName == "native" && isLinkerOptsSetByUser) {
+        warn("-linker-option(s)/-linkerOpts option is not supported by cinterop. Please add linker options to .def file or binary compilation instead.")
+    }
 
-    // TODO: We can provide a set of flags to find the components in the absence of 'dist' or 'dist/dependencies'.
-    val llvmHome = konanProperties.getHostSpecific("llvmHome")!!
-    val llvmInstallPath = "$dependencies/$llvmHome"
-    val additionalHeaders = args["-h"].orEmpty()
-    val additionalCompilerOpts = args["-copt"].orEmpty()+ args["-compilerOpts"].orEmpty()
-    val additionalLinkerOpts = args["-lopt"].orEmpty() + args["-linkerOpts"].orEmpty()
-    val generateShims = args["-shims"].isTrue()
-    val verbose = args["-verbose"].isTrue()
+    val additionalLinkerOpts = cinteropArguments.linkerOpts.value.toTypedArray() + cinteropArguments.linkerOption.value.toTypedArray() +
+            cinteropArguments.linkerOptions.value.toTypedArray()
+    val verbose = cinteropArguments.verbose
 
-    val defaultOpts = konanProperties.defaultCompilerOpts(target, dependencies)
-    val headerFiles = config.getSpaceSeparated("headers") + additionalHeaders
-    val compilerOpts = config.getSpaceSeparated("compilerOpts") + defaultOpts + additionalCompilerOpts
-    val compiler = "clang"
-    val language = Language.C
-    val excludeSystemLibs = config.getProperty("excludeSystemLibs")?.toBoolean() ?: false
-    val excludeDependentModules = config.getProperty("excludeDependentModules")?.toBoolean() ?: false
+    val language = selectNativeLanguage(def.config)
 
-    val entryPoint = config.getSpaceSeparated("entryPoint").atMostOne()
+    val entryPoint = def.config.entryPoints.atMostOne()
     val linkerOpts =
-            config.getSpaceSeparated("linkerOpts").toTypedArray() + defaultOpts + additionalLinkerOpts
-    val linker = args["-linker"]?.atMostOne() ?: config.getProperty("linker") ?: "clang"
-    val excludedFunctions = config.getSpaceSeparated("excludedFunctions").toSet()
-
-    val fqParts = args["-pkg"]?.atMostOne()?.let {
-        it.split('.')
-    } ?: defFile!!.name.split('.').reversed().drop(1)
+            def.config.linkerOpts.toTypedArray() + 
+            tool.defaultCompilerOpts + 
+            additionalLinkerOpts
+    val linkerName = cinteropArguments.linker ?: def.config.linker
+    val linker = "${tool.llvmHome}/bin/$linkerName"
+    val compiler = "${tool.llvmHome}/bin/clang"
+    val excludedFunctions = def.config.excludedFunctions.toSet()
+    val excludedMacros = def.config.excludedMacros.toSet()
+    val staticLibraries = def.config.staticLibraries + cinteropArguments.staticLibrary.toTypedArray()
+    val libraryPaths = def.config.libraryPaths + cinteropArguments.libraryPath.toTypedArray()
+    val fqParts = (cinteropArguments.pkg ?: def.config.packageName)?.split('.')
+            ?: defFile!!.name.split('.').reversed().drop(1)
 
     val outKtFileName = fqParts.last() + ".kt"
 
@@ -364,81 +210,175 @@ private fun processLib(konanHome: String,
     val outKtFileRelative = (fqParts + outKtFileName).joinToString("/")
     val outKtFile = File(ktGenRoot, outKtFileRelative)
 
-    val libName = args["-cstubsname"]?.atMostOne() ?: fqParts.joinToString("") + "stubs"
+    val libName = (additionalArgs["cstubsname"] as? String)?: fqParts.joinToString("") + "stubs"
 
-    val headerFilterGlobs = config.getSpaceSeparated("headerFilter")
+    val tempFiles = TempFiles(libName, cinteropArguments.tempDir)
 
-    val headerFilter = { name: String ->
-        if (headerFilterGlobs.isEmpty()) {
-            true
-        } else {
-            headerFilterGlobs.any { name.matchesToGlob(it) }
-        }
+    val imports = parseImports((additionalArgs["import"] as? List<String>)?.toTypedArray() ?: arrayOf())
+
+    val library = buildNativeLibrary(tool, def, cinteropArguments, imports)
+
+    val (nativeIndex, compilation) = buildNativeIndex(library, verbose)
+
+    // Our current approach to arm64_32 support is to compile armv7k version of bitcode
+    // for arm64_32. That's the reason for this substitution.
+    // TODO: Add proper support with the next LLVM update.
+    val target = when (tool.target) {
+        KonanTarget.WATCHOS_ARM64 -> KonanTarget.WATCHOS_ARM32
+        else -> tool.target
     }
-
-    val library = NativeLibrary(
-            includes = headerFiles,
-            additionalPreambleLines = defHeaderLines,
-            compilerArgs = compilerOpts,
-            language = language,
-            excludeSystemLibs = excludeSystemLibs,
-            excludeDepdendentModules = excludeDependentModules,
-            headerFilter = headerFilter
-    )
-
     val configuration = InteropConfiguration(
-            library = library,
+            library = compilation,
             pkgName = outKtPkg,
             excludedFunctions = excludedFunctions,
-            strictEnums = config.getSpaceSeparated("strictEnums").toSet(),
-            nonStrictEnums = config.getSpaceSeparated("nonStrictEnums").toSet()
+            excludedMacros = excludedMacros,
+            strictEnums = def.config.strictEnums.toSet(),
+            nonStrictEnums = def.config.nonStrictEnums.toSet(),
+            noStringConversion = def.config.noStringConversion.toSet(),
+            exportForwardDeclarations = def.config.exportForwardDeclarations,
+            disableDesignatedInitializerChecks = def.config.disableDesignatedInitializerChecks,
+            target = target
     )
-
-    val nativeIndex = buildNativeIndex(library)
-
-    val gen = StubGenerator(nativeIndex, configuration, libName, generateShims, verbose, flavor)
 
     outKtFile.parentFile.mkdirs()
 
     File(nativeLibsDir).mkdirs()
-    val outCFile = File("$nativeLibsDir/$libName.c") // TODO: select the better location.
+    val outCFile = tempFiles.create(libName, ".${language.sourceFileExtension}")
 
-    outKtFile.bufferedWriter().use { ktFile ->
-        outCFile.bufferedWriter().use { cFile ->
-            gen.generateFiles(ktFile = ktFile, cFile = cFile, entryPoint = entryPoint)
-        }
+    val logger = if (verbose) {
+        { message: String -> println(message) }
+    } else {
+        {}
     }
 
-    val workDir = defFile?.absoluteFile?.parentFile ?: File(userDir)
+    val stubIrContext = StubIrContext(logger, configuration, nativeIndex, imports, flavor, libName)
+    val stubIrDriver = StubIrDriver(stubIrContext)
+    stubIrDriver.run(outKtFile, File(outCFile.absolutePath), entryPoint)
+
+    // TODO: if a library has partially included headers, then it shouldn't be used as a dependency.
+    def.manifestAddendProperties["includedHeaders"] = nativeIndex.includedHeaders.joinToString(" ") { it.value }
+
+    def.manifestAddendProperties.putAndRunOnReplace("package", outKtPkg) {
+        _, oldValue, newValue ->
+            warn("The package value `$oldValue` specified in .def file is overridden with explicit $newValue")
+    }
+
+    def.manifestAddendProperties["interop"] = "true"
+
+    stubIrContext.addManifestProperties(def.manifestAddendProperties)
+
+    manifestAddend?.parentFile?.mkdirs()
+    manifestAddend?.let { def.manifestAddendProperties.storeProperties(it) }
 
     if (flavor == KotlinPlatform.JVM) {
 
-        val outOFile = createTempFile(suffix = ".o")
+        val outOFile = tempFiles.create(libName,".o")
 
-        val compilerCmd = arrayOf("$llvmInstallPath/bin/$compiler", *gen.libraryForCStubs.compilerArgs.toTypedArray(),
+        val compilerCmd = arrayOf(compiler, *stubIrContext.libraryForCStubs.compilerArgs.toTypedArray(),
                 "-c", outCFile.absolutePath, "-o", outOFile.absolutePath)
 
-        runCmd(compilerCmd, workDir, verbose)
+        runCmd(compilerCmd, verbose)
 
         val outLib = File(nativeLibsDir, System.mapLibraryName(libName))
 
-        val linkerCmd = arrayOf("$llvmInstallPath/bin/$linker",
+        val linkerCmd = arrayOf(linker,
                 outOFile.absolutePath, "-shared", "-o", outLib.absolutePath,
                 *linkerOpts)
 
-        runCmd(linkerCmd, workDir, verbose)
-
-        outOFile.delete()
+        runCmd(linkerCmd, verbose)
     } else if (flavor == KotlinPlatform.NATIVE) {
         val outBcName = libName + ".bc"
         val outLib = File(nativeLibsDir, outBcName)
-        val compilerCmd = arrayOf("$llvmInstallPath/bin/$compiler", *gen.libraryForCStubs.compilerArgs.toTypedArray(),
+        val compilerCmd = arrayOf(compiler, *stubIrContext.libraryForCStubs.compilerArgs.toTypedArray(),
                 "-emit-llvm", "-c", outCFile.absolutePath, "-o", outLib.absolutePath)
 
-        runCmd(compilerCmd, workDir, verbose)
+        runCmd(compilerCmd, verbose)
+    }
+    return argsToCompiler(staticLibraries, libraryPaths)
+}
+
+internal fun prepareTool(target: String?, flavor: KotlinPlatform): ToolConfig {
+    val tool = ToolConfig(target, flavor)
+    tool.downloadDependencies()
+
+    System.load(tool.libclang)
+
+    return tool
+}
+
+internal fun buildNativeLibrary(
+        tool: ToolConfig,
+        def: DefFile,
+        arguments: CInteropArguments,
+        imports: ImportsImpl
+): NativeLibrary {
+    val additionalHeaders = (arguments.header).toTypedArray()
+    val additionalCompilerOpts = (arguments.compilerOpts +
+            arguments.compilerOptions + arguments.compilerOption).toTypedArray()
+
+    val headerFiles = def.config.headers + additionalHeaders
+    val language = selectNativeLanguage(def.config)
+    val compilerOpts: List<String> = mutableListOf<String>().apply {
+        addAll(def.config.compilerOpts)
+        addAll(tool.defaultCompilerOpts)
+        addAll(additionalCompilerOpts)
+        addAll(getCompilerFlagsForVfsOverlay(arguments.headerFilterPrefix.toTypedArray(), def))
+        addAll(when (language) {
+            Language.C -> emptyList()
+            Language.OBJECTIVE_C -> {
+                // "Objective-C" within interop means "Objective-C with ARC":
+                listOf("-fobjc-arc")
+                // Using this flag here has two effects:
+                // 1. The headers are parsed with ARC enabled, thus the API is visible correctly.
+                // 2. The generated Objective-C stubs are compiled with ARC enabled, so reference counting
+                // calls are inserted automatically.
+            }
+        })
     }
 
-    if (!args["-keepcstubs"].isTrue()) {
-        outCFile.delete()
+    val compilation = CompilationImpl(
+            includes = headerFiles,
+            additionalPreambleLines = def.defHeaderLines,
+            compilerArgs = compilerOpts + tool.platformCompilerOpts,
+            language = language
+    )
+
+    val headerFilter: NativeLibraryHeaderFilter
+    val includes: List<String>
+
+    val modules = def.config.modules
+
+    if (modules.isEmpty()) {
+        val excludeDependentModules = def.config.excludeDependentModules
+
+        val headerFilterGlobs = def.config.headerFilter
+        val headerInclusionPolicy = HeaderInclusionPolicyImpl(headerFilterGlobs)
+
+        headerFilter = NativeLibraryHeaderFilter.NameBased(headerInclusionPolicy, excludeDependentModules)
+        includes = headerFiles
+    } else {
+        require(language == Language.OBJECTIVE_C) { "cinterop supports 'modules' only when 'language = Objective-C'" }
+        require(headerFiles.isEmpty()) { "cinterop doesn't support having headers and modules specified at the same time" }
+        require(def.config.headerFilter.isEmpty()) { "cinterop doesn't support 'headerFilter' with 'modules'" }
+
+        val modulesInfo = getModulesInfo(compilation, modules)
+
+        headerFilter = NativeLibraryHeaderFilter.Predefined(modulesInfo.ownHeaders)
+        includes = modulesInfo.topLevelHeaders
     }
+
+    val excludeSystemLibs = def.config.excludeSystemLibs
+
+    val headerExclusionPolicy = HeaderExclusionPolicyImpl(imports)
+
+    return NativeLibrary(
+            includes = includes,
+            additionalPreambleLines = compilation.additionalPreambleLines,
+            compilerArgs = compilation.compilerArgs,
+            headerToIdMapper = HeaderToIdMapper(sysRoot = tool.sysRoot),
+            language = compilation.language,
+            excludeSystemLibs = excludeSystemLibs,
+            headerExclusionPolicy = headerExclusionPolicy,
+            headerFilter = headerFilter
+    )
 }

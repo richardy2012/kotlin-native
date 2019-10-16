@@ -1,22 +1,15 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
-
 import org.jetbrains.kotlin.CompileCppToBitcode
 
 // TODO: consider using some Gradle plugins to build and test
+
+void includeRuntime(CompileCppToBitcode task) {
+    task.compilerArgs '-I' + project.file('../common/src/hash/headers')
+    task.compilerArgs '-I' + project.file('src/main/cpp')
+}
 
 targetList.each { targetName ->
     task("${targetName}Runtime", type: CompileCppToBitcode) {
@@ -24,29 +17,87 @@ targetList.each { targetName ->
         srcRoot file('src/main')
         dependsOn ":common:${targetName}Hash"
         dependsOn "${targetName}Launcher"
+        dependsOn "${targetName}Debug"
+        dependsOn "${targetName}Release"
+        dependsOn "${targetName}Strict"
+        dependsOn "${targetName}Relaxed"
+        dependsOn "${targetName}ProfileRuntime"
+        dependsOn "${targetName}ObjC"
         target targetName
-        compilerArgs targetArgs[targetName]
-        compilerArgs '-I' + project.file('../common/src/hash/headers')
-        compilerArgs '-I' + project.file(rootProject.ext.get("${targetName}LibffiDir") + "/include")
+        includeRuntime(delegate)
         linkerArgs project.file("../common/build/$targetName/hash.bc").path
     }
-}
 
-targetList.each { targetName ->
     task("${targetName}Launcher", type: CompileCppToBitcode) {
         name "launcher"
         srcRoot file('src/launcher')
         target targetName
-        compilerArgs targetArgs[targetName]
-        compilerArgs '-I' + project.file('../common/src/hash/headers')
-        compilerArgs '-I' + project.file('src/main/cpp')
+        includeRuntime(delegate)
+    }
+
+    task ("${targetName}Debug", type: CompileCppToBitcode) {
+        name "debug"
+        srcRoot file('src/debug')
+        target targetName
+        includeRuntime(delegate)
+    }
+
+    task ("${targetName}Release", type: CompileCppToBitcode) {
+        name "release"
+        srcRoot file('src/release')
+        target targetName
+        includeRuntime(delegate)
+    }
+
+    task ("${targetName}Strict", type: CompileCppToBitcode) {
+        name "strict"
+        srcRoot file('src/strict')
+        target targetName
+        includeRuntime(delegate)
+    }
+
+    task ("${targetName}Relaxed", type: CompileCppToBitcode) {
+        name "relaxed"
+        srcRoot file('src/relaxed')
+        target targetName
+        includeRuntime(delegate)
+    }
+
+    task ("${targetName}ProfileRuntime", type: CompileCppToBitcode) {
+        name "profileRuntime"
+        srcRoot file('src/profile_runtime')
+        target targetName
+    }
+
+    task ("${targetName}ObjC", type: CompileCppToBitcode) {
+        name "objc"
+        srcRoot file('src/objc')
+        target targetName
+        includeRuntime(delegate)
     }
 }
 
-task hostRuntime(dependsOn: "${rootProject.ext.host}Runtime")
+task hostRuntime(dependsOn: "${hostName}Runtime")
 
 task clean {
     doLast {
         delete buildDir
+    }
+}
+
+task generateJsMath {
+    dependsOn ':distCompiler'
+    doLast {
+        def jsinteropScript = isWindows() ? "jsinterop.bat" : "jsinterop"
+        def jsinterop = "$distDir/bin/$jsinteropScript"
+        def targetDir = "$buildDir/generated"
+        "$jsinterop -pkg kotlinx.interop.wasm.math -o $targetDir/math -target wasm32".execute().waitFor()
+        def generated = file("$targetDir/math-build/natives/js_stubs.js")
+        def mathJs = file('src/main/js/math.js')
+        mathJs.write("// NOTE: THIS FILE IS AUTO-GENERATED!\n" +
+                     "// Run ':runtime:generateJsMath' to re-generate it.\n\n")
+        generated.withReader {
+            mathJs.append(it)
+        }
     }
 }

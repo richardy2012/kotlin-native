@@ -22,14 +22,12 @@
 #include <llvm/IR/Instruction.h>
 #include <llvm/Support/Casting.h>
 #include "DebugInfoC.h"
-
-
 /**
- * c++ --std=c++11 llvmDebugInfoC/src/DebugInfoC.cpp -IllvmDebugInfoC/include/ -Idependencies/all/clang+llvm-3.9.0-darwin-macos/include -Ldependencies/all/clang+llvm-3.9.0-darwin-macos/lib  -lLLVMCore -lLLVMSupport -lncurses -shared -o libLLVMDebugInfoC.dylib
+ * c++ --std=c++14 llvmDebugInfoC/src/DebugInfoC.cpp -IllvmDebugInfoC/include/ -Idependencies/all/clang+llvm-3.9.0-darwin-macos/include -Ldependencies/all/clang+llvm-3.9.0-darwin-macos/lib  -lLLVMCore -lLLVMSupport -lncurses -shared -o libLLVMDebugInfoC.dylib
  */
 
 namespace llvm {
-DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DIBuilder,        DIBuilderRef)
+//DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DIBuilder,        DIBuilderRef)
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DICompileUnit,    DICompileUnitRef)
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DIFile,           DIFileRef)
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DIBasicType,      DIBasicTypeRef)
@@ -45,7 +43,7 @@ DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DILocalVariable,  DILocalVariableRef)
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DIExpression,     DIExpressionRef)
 
 // from Module.cpp
-DEFINE_SIMPLE_CONVERSION_FUNCTIONS(Module,        LLVMModuleRef)
+//DEFINE_SIMPLE_CONVERSION_FUNCTIONS(Module,        LLVMModuleRef)
 }
 
 /**
@@ -61,6 +59,10 @@ DIBuilderRef DICreateBuilder(LLVMModuleRef module) {
 void DIFinalize(DIBuilderRef builder) {
   auto diBuilder = llvm::unwrap(builder);
   diBuilder->finalize();
+}
+
+void DIDispose(DIBuilderRef builder) {
+  auto diBuilder = llvm::unwrap(builder);
   delete diBuilder;
 }
 
@@ -68,7 +70,8 @@ DICompileUnitRef DICreateCompilationUnit(DIBuilderRef builder, unsigned int lang
                                          const char *file, const char* dir,
                                          const char * producer, int isOptimized,
                                          const char * flags, unsigned int rv) {
-  return llvm::wrap(llvm::unwrap(builder)->createCompileUnit(lang, file, dir, producer, isOptimized, flags, rv));
+  llvm::DIBuilder *D = llvm::unwrap(builder);
+  return llvm::wrap(llvm::unwrap(builder)->createCompileUnit(lang, D->createFile(file, dir), producer, isOptimized, flags, rv));
 }
 
 DIFileRef DICreateFile(DIBuilderRef builder, const char *filename, const char *directory) {
@@ -76,7 +79,7 @@ DIFileRef DICreateFile(DIBuilderRef builder, const char *filename, const char *d
 }
 
 DIBasicTypeRef DICreateBasicType(DIBuilderRef builder, const char* name, uint64_t sizeInBits, uint64_t alignment, unsigned encoding) {
-  return llvm::wrap(llvm::unwrap(builder)->createBasicType(name, sizeInBits, alignment, encoding));
+  return llvm::wrap(llvm::unwrap(builder)->createBasicType(name, sizeInBits, encoding));
 }
 
 DIModuleRef DICreateModule(DIBuilderRef builder, DIScopeOpaqueRef scope,
@@ -85,21 +88,35 @@ DIModuleRef DICreateModule(DIBuilderRef builder, DIScopeOpaqueRef scope,
   return llvm::wrap(llvm::unwrap(builder)->createModule(llvm::unwrap(scope), name, configurationMacro, includePath, iSysRoot));
 }
 
-DISubprogramRef DICreateFunction(DIBuilderRef builder, DIScopeOpaqueRef scope,
+DISubprogramRef DICreateFunction(DIBuilderRef builderRef, DIScopeOpaqueRef scope,
                                  const char* name, const char *linkageName,
                                  DIFileRef file, unsigned lineNo,
                                  DISubroutineTypeRef type, int isLocal,
                                  int isDefinition, unsigned scopeLine) {
-  return llvm::wrap(llvm::unwrap(builder)->createFunction(llvm::unwrap(scope),
-                                                          name,
-                                                          linkageName,
-                                                          llvm::unwrap(file),
-                                                          lineNo,
-                                                          llvm::unwrap(type),
-                                                          isLocal,
-                                                          isDefinition,
-                                                          scopeLine));
+  auto builder = llvm::unwrap(builderRef);
+  auto subprogram = builder->createFunction(llvm::unwrap(scope),
+                                            name,
+                                            linkageName,
+                                            llvm::unwrap(file),
+                                            lineNo,
+                                            llvm::unwrap(type),
+                                            scopeLine, llvm::DINode::DIFlags::FlagZero, llvm::DISubprogram::toSPFlags(false, true, false));
+  auto tmp = subprogram->getRetainedNodes().get();
+  if (!tmp && tmp->isTemporary())
+    llvm::MDTuple::deleteTemporary(tmp);
+
+  builder->finalizeSubprogram(subprogram);
+  return llvm::wrap(subprogram);
 }
+
+DIScopeOpaqueRef DICreateLexicalBlockFile(DIBuilderRef builderRef, DIScopeOpaqueRef scopeRef, DIFileRef fileRef) {
+  return llvm::wrap(llvm::unwrap(builderRef)->createLexicalBlockFile(llvm::unwrap(scopeRef), llvm::unwrap(fileRef)));
+}
+
+DIScopeOpaqueRef DICreateLexicalBlock(DIBuilderRef builderRef, DIScopeOpaqueRef scopeRef, DIFileRef fileRef, int line, int column) {
+  return llvm::wrap(llvm::unwrap(builderRef)->createLexicalBlock(llvm::unwrap(scopeRef), llvm::unwrap(fileRef), line, column));
+}
+
 
 DICompositeTypeRef DICreateStructType(DIBuilderRef refBuilder,
                                       DIScopeOpaqueRef scope, const char *name,
@@ -111,7 +128,7 @@ DICompositeTypeRef DICreateStructType(DIBuilderRef refBuilder,
                                       DICompositeTypeRef refPlace) {
   auto builder = llvm::unwrap(refBuilder);
   if ((flags & DI_FORWARD_DECLARAION) != 0) {
-    return llvm::wrap(builder->createStructType(llvm::unwrap(scope), name, NULL, 0, 0, 0, flags, NULL, NULL));
+    return llvm::wrap(builder->createStructType(llvm::unwrap(scope), name, NULL, 0, 0, 0, (llvm::DINode::DIFlags)flags, NULL, NULL));
   }
   std::vector<llvm::Metadata *> typeElements;
   for(int i = 0; i < elementsCount; ++i) {
@@ -121,7 +138,7 @@ DICompositeTypeRef DICreateStructType(DIBuilderRef refBuilder,
   auto composite = builder->createStructType(llvm::unwrap(scope),
                                               name, llvm::unwrap(file),
                                               lineNumber,
-                                              sizeInBits, alignInBits, flags,
+                                              sizeInBits, alignInBits, (llvm::DINode::DIFlags)flags,
                                               llvm::unwrap(derivedFrom),
                                               elementsArray);
   builder->replaceTemporary(llvm::TempDIType(llvm::unwrap(refPlace)), composite);
@@ -158,7 +175,7 @@ DIDerivedTypeRef DICreateMemberType(DIBuilderRef refBuilder,
                       sizeInBits,
                       alignInBits,
                       offsetInBits,
-                      flags,
+                      (llvm::DINode::DIFlags)flags,
                       llvm::unwrap(type)));
 }
 
@@ -175,6 +192,12 @@ DICompositeTypeRef DICreateReplaceableCompositeType(DIBuilderRef refBuilder,
 DIDerivedTypeRef DICreateReferenceType(DIBuilderRef refBuilder, DITypeOpaqueRef refType) {
   return llvm::wrap(llvm::unwrap(refBuilder)->createReferenceType(
                       llvm::dwarf::DW_TAG_reference_type,
+                      llvm::unwrap(refType)));
+}
+
+DIDerivedTypeRef DICreatePointerType(DIBuilderRef refBuilder, DITypeOpaqueRef refType) {
+  return llvm::wrap(llvm::unwrap(refBuilder)->createReferenceType(
+                      llvm::dwarf::DW_TAG_pointer_type,
                       llvm::unwrap(refType)));
 }
 
@@ -195,7 +218,7 @@ void DIFunctionAddSubprogram(LLVMValueRef fn, DISubprogramRef sp) {
   auto dsp = llvm::cast<llvm::DISubprogram>(llvm::unwrap(sp));
   f->setSubprogram(dsp);
   if (!dsp->describes(f)) {
-    fprintf(stderr, "error!!! f:%s, sp:%s\n", f->getName(), dsp->getLinkageName());
+    fprintf(stderr, "error!!! f:%s, sp:%s\n", f->getName().str().c_str(), dsp->getLinkageName().str().c_str());
   }
 }
 
@@ -208,26 +231,46 @@ DILocalVariableRef DICreateAutoVariable(DIBuilderRef builder, DIScopeOpaqueRef s
     llvm::unwrap(type)));
 }
 
+DILocalVariableRef DICreateParameterVariable(DIBuilderRef builder, DIScopeOpaqueRef scope, const char *name, unsigned argNo, DIFileRef file, unsigned line, DITypeOpaqueRef type) {
+  return llvm::wrap(llvm::unwrap(builder)->createParameterVariable(
+    llvm::unwrap(scope),
+    name,
+    argNo,
+    llvm::unwrap(file),
+    line,
+    llvm::unwrap(type)));
+}
+
 DIExpressionRef DICreateEmptyExpression(DIBuilderRef builder) {
   return llvm::wrap(llvm::unwrap(builder)->createExpression());
 }
 
-void DIInsertDeclarationWithEmptyExpression(DIBuilderRef builder, LLVMValueRef value, DILocalVariableRef localVariable, DILocationRef location, LLVMBasicBlockRef bb) {
+void DIInsertDeclaration(DIBuilderRef builder, LLVMValueRef value, DILocalVariableRef localVariable, DILocationRef location, LLVMBasicBlockRef bb, int64_t *expr, uint64_t exprCount) {
   auto di_builder = llvm::unwrap(builder);
+  std::vector<int64_t> expression;
+  for (uint64_t i = 0; i < exprCount; ++i)
+    expression.push_back(expr[i]);
   di_builder->insertDeclare(llvm::unwrap(value),
                             llvm::unwrap(localVariable),
-                            di_builder->createExpression(),
+                            di_builder->createExpression(expression),
                             llvm::unwrap(location),
                             llvm::unwrap(bb));
 }
 
-DILocationRef LLVMBuilderSetDebugLocation(LLVMBuilderRef builder, unsigned line,
+DILocationRef LLVMCreateLocation(LLVMContextRef contextRef, unsigned line,
                                  unsigned col, DIScopeOpaqueRef scope) {
-  auto sp = llvm::unwrap(scope);
-  auto llvmBuilder = llvm::unwrap(builder);
-  auto location = llvm::DILocation::get(llvmBuilder->getContext(), line, col, sp, nullptr);
-  llvmBuilder->SetCurrentDebugLocation(location);
+  auto location = llvm::DILocation::get(*llvm::unwrap(contextRef), line, col, llvm::unwrap(scope), nullptr);
   return llvm::wrap(location);
+}
+
+DILocationRef LLVMCreateLocationInlinedAt(LLVMContextRef contextRef, unsigned line,
+                                 unsigned col, DIScopeOpaqueRef scope, DILocationRef refLocationInlinedAt) {
+  auto location = llvm::DILocation::get(*llvm::unwrap(contextRef), line, col, llvm::unwrap(scope), llvm::unwrap(refLocationInlinedAt));
+  return llvm::wrap(location);
+}
+
+void LLVMBuilderSetDebugLocation(LLVMBuilderRef builder, DILocationRef refLocation) {
+  llvm::unwrap(builder)->SetCurrentDebugLocation(llvm::unwrap(refLocation));
 }
 
 void LLVMBuilderResetDebugLocation(LLVMBuilderRef builder) {
@@ -249,10 +292,6 @@ const char *DIGetSubprogramLinkName(DISubprogramRef sp) {
 
 int DISubprogramDescribesFunction(DISubprogramRef sp, LLVMValueRef fn) {
   return llvm::unwrap(sp)->describes(llvm::cast<llvm::Function>(llvm::unwrap(fn)));
-}
-
-void DIScopeDump(DIScopeOpaqueRef scope) {
-  llvm::unwrap(scope)->dump();
 }
 } /* extern "C" */
 

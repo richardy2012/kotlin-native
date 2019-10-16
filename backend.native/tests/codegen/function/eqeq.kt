@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.function.eqeq
+
+import kotlin.test.*
+
 fun eqeqB  (a:Byte,   b:Byte  ) = a == b
 fun eqeqS  (a:Short,  b:Short ) = a == b
 fun eqeqI  (a:Int,    b:Int   ) = a == b
@@ -26,7 +35,7 @@ fun neF  (a:Float,  b:Float ) = a != b
 fun helloString()   =  "Hello"
 fun goodbyeString() =  "Goodbye"
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     if (!eqeqB(3   , 3   )) throw Error()
     if (!eqeqS(3   , 3   )) throw Error()
     if (!eqeqI(3   , 3   )) throw Error()

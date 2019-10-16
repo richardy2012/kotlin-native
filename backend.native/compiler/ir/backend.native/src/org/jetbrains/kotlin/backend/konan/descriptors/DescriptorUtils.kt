@@ -1,57 +1,36 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.descriptors
 
-import org.jetbrains.kotlin.backend.konan.KonanBuiltIns
-import org.jetbrains.kotlin.backend.konan.ValueType
-import org.jetbrains.kotlin.backend.konan.isRepresentedAs
-import org.jetbrains.kotlin.backend.konan.isValueType
-import org.jetbrains.kotlin.backend.konan.llvm.functionName
-import org.jetbrains.kotlin.backend.konan.llvm.localHash
-import org.jetbrains.kotlin.backend.konan.llvm.isExported
-import org.jetbrains.kotlin.builtins.functions.FunctionClassDescriptor
-import org.jetbrains.kotlin.builtins.getFunctionalClassKind
-import org.jetbrains.kotlin.builtins.isFunctionType
-import org.jetbrains.kotlin.builtins.isSuspendFunctionType
+import org.jetbrains.kotlin.backend.konan.*
+import org.jetbrains.kotlin.backend.konan.descriptors.resolveFakeOverride
+import org.jetbrains.kotlin.backend.konan.ir.*
+import org.jetbrains.kotlin.backend.konan.isObjCClass
+import org.jetbrains.kotlin.backend.konan.llvm.longName
 import org.jetbrains.kotlin.descriptors.*
-import org.jetbrains.kotlin.incremental.components.NoLookupLocation
-import org.jetbrains.kotlin.name.FqName
-import org.jetbrains.kotlin.name.Name
-import org.jetbrains.kotlin.resolve.OverridingUtil
-import org.jetbrains.kotlin.resolve.descriptorUtil.classId
-import org.jetbrains.kotlin.resolve.descriptorUtil.fqNameSafe
-import org.jetbrains.kotlin.resolve.descriptorUtil.getSuperClassNotAny
-import org.jetbrains.kotlin.resolve.descriptorUtil.getSuperInterfaces
-import org.jetbrains.kotlin.resolve.scopes.MemberScope
-import org.jetbrains.kotlin.types.KotlinType
-import org.jetbrains.kotlin.types.typeUtil.isUnit
-import org.jetbrains.kotlin.util.OperatorNameConventions
+import org.jetbrains.kotlin.ir.declarations.*
+import org.jetbrains.kotlin.ir.expressions.IrConst
+import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
+import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
+import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
+import org.jetbrains.kotlin.ir.types.isUnit
+import org.jetbrains.kotlin.ir.util.*
+import org.jetbrains.kotlin.types.SimpleType
 
 /**
  * List of all implemented interfaces (including those which implemented by a super class)
  */
-internal val ClassDescriptor.implementedInterfaces: List<ClassDescriptor>
+internal val IrClass.implementedInterfaces: List<IrClass>
     get() {
         val superClassImplementedInterfaces = this.getSuperClassNotAny()?.implementedInterfaces ?: emptyList()
         val superInterfaces = this.getSuperInterfaces()
         val superInterfacesImplementedInterfaces = superInterfaces.flatMap { it.implementedInterfaces }
         return (superClassImplementedInterfaces +
                 superInterfacesImplementedInterfaces +
-                superInterfaces).distinctBy { it.classId }
+                superInterfaces).distinct()
     }
 
 
@@ -60,32 +39,48 @@ internal val ClassDescriptor.implementedInterfaces: List<ClassDescriptor>
  *
  * TODO: this method is actually a part of resolve and probably duplicates another one
  */
-internal fun <T : CallableMemberDescriptor> T.resolveFakeOverride(): T {
-    if (this.kind.isReal) {
+internal fun IrSimpleFunction.resolveFakeOverride(allowAbstract: Boolean = false): IrSimpleFunction {
+    if (this.isReal) {
         return this
-    } else {
-        val overridden = OverridingUtil.getOverriddenDeclarations(this)
-        val filtered = OverridingUtil.filterOutOverridden(overridden)
-        // TODO: is it correct to take first?
-        @Suppress("UNCHECKED_CAST")
-        return filtered.first { it.modality != Modality.ABSTRACT } as T
     }
+
+    val visited = mutableSetOf<IrSimpleFunction>()
+    val realSupers = mutableSetOf<IrSimpleFunction>()
+
+    fun findRealSupers(function: IrSimpleFunction) {
+        if (function in visited) return
+        visited += function
+        if (function.isReal) {
+            realSupers += function
+        } else {
+            function.overriddenSymbols.forEach { findRealSupers(it.owner) }
+        }
+    }
+
+    findRealSupers(this)
+
+    if (realSupers.size > 1) {
+        visited.clear()
+
+        fun excludeOverridden(function: IrSimpleFunction) {
+            if (function in visited) return
+            visited += function
+            function.overriddenSymbols.forEach {
+                realSupers.remove(it.owner)
+                excludeOverridden(it.owner)
+            }
+        }
+
+        realSupers.toList().forEach { excludeOverridden(it) }
+    }
+
+    return realSupers.first { allowAbstract || it.modality != Modality.ABSTRACT }
 }
 
-private val intrinsicAnnotation = FqName("konan.internal.Intrinsic")
+internal val IrFunction.isTypedIntrinsic: Boolean
+    get() = annotations.hasAnnotation(KonanFqNames.typedIntrinsic)
 
-// TODO: check it is external?
-internal val FunctionDescriptor.isIntrinsic: Boolean
-    get() = this.annotations.findAnnotation(intrinsicAnnotation) != null
-
-private val intrinsicTypes = setOf(
-        "kotlin.Boolean", "kotlin.Char",
-        "kotlin.Byte", "kotlin.Short",
-        "kotlin.Int", "kotlin.Long",
-        "kotlin.Float", "kotlin.Double"
-)
-
-private val arrayTypes = setOf(
+internal val arrayTypes = setOf(
         "kotlin.Array",
         "kotlin.ByteArray",
         "kotlin.CharArray",
@@ -94,117 +89,51 @@ private val arrayTypes = setOf(
         "kotlin.LongArray",
         "kotlin.FloatArray",
         "kotlin.DoubleArray",
-        "kotlin.BooleanArray"
+        "kotlin.BooleanArray",
+        "kotlin.native.ImmutableBlob",
+        "kotlin.native.internal.NativePtrArray"
 )
 
-internal val ClassDescriptor.isIntrinsic: Boolean
-    get() = this.fqNameSafe.asString() in intrinsicTypes
+
+internal val IrClass.isArray: Boolean
+    get() = this.fqNameForIrSerialization.asString() in arrayTypes
 
 
-internal val ClassDescriptor.isArray: Boolean
-    get() = this.fqNameSafe.asString() in arrayTypes
+fun IrClass.isAbstract() = this.modality == Modality.SEALED || this.modality == Modality.ABSTRACT
 
-
-internal val ClassDescriptor.isInterface: Boolean
-    get() = (this.kind == ClassKind.INTERFACE)
-
-private val konanInternalPackageName = FqName.fromSegments(listOf("konan", "internal"))
-
-/**
- * @return `konan.internal` member scope
- */
-internal val KonanBuiltIns.konanInternal: MemberScope
-    get() = this.builtInsModule.getPackage(konanInternalPackageName).memberScope
-
-internal val KotlinType.isKFunctionType: Boolean
-    get() {
-        val kind = constructor.declarationDescriptor?.getFunctionalClassKind()
-        return kind == FunctionClassDescriptor.Kind.KFunction
-    }
-
-internal val FunctionDescriptor.isFunctionInvoke: Boolean
-    get() {
-        val dispatchReceiver = dispatchReceiverParameter ?: return false
-        assert(!dispatchReceiver.type.isKFunctionType)
-
-        return dispatchReceiver.type.isFunctionType &&
-                this.isOperator && this.name == OperatorNameConventions.INVOKE
-    }
-
-internal val FunctionDescriptor.isSuspendFunctionInvoke: Boolean
-    get() {
-        val dispatchReceiver = dispatchReceiverParameter
-                ?: return false
-
-        return dispatchReceiver.type.isSuspendFunctionType &&
-                this.isOperator && this.name == OperatorNameConventions.INVOKE
-    }
-
-internal fun ClassDescriptor.isUnit() = this.defaultType.isUnit()
-
-internal val <T : CallableMemberDescriptor> T.allOverriddenDescriptors: List<T>
-    get() {
-        val result = mutableListOf<T>()
-        fun traverse(descriptor: T) {
-            result.add(descriptor)
-            @Suppress("UNCHECKED_CAST")
-            descriptor.overriddenDescriptors.forEach { traverse(it as T) }
-        }
-        traverse(this)
-        return result
-    }
-
-internal val ClassDescriptor.sortedContributedMethods: List<FunctionDescriptor>
-    get () = unsubstitutedMemberScope.sortedContributedMethods
-
-internal val ClassDescriptor.contributedMethods: List<FunctionDescriptor>
-    get () = unsubstitutedMemberScope.contributedMethods
-
-internal val MemberScope.sortedContributedMethods: List<FunctionDescriptor>
-    get () = contributedMethods.sortedBy {
-            it.functionName.localHash.value
-    }
-
-internal val MemberScope.contributedMethods: List<FunctionDescriptor>
-    get () {
-        val contributedDescriptors = this.getContributedDescriptors()
-
-        val functions = contributedDescriptors.filterIsInstance<FunctionDescriptor>()
-
-        val properties = contributedDescriptors.filterIsInstance<PropertyDescriptor>()
-        val getters = properties.mapNotNull { it.getter }
-        val setters = properties.mapNotNull { it.setter }
-
-        return functions + getters + setters
-    }
-
-fun ClassDescriptor.isAbstract() = this.modality == Modality.SEALED || this.modality == Modality.ABSTRACT
-        || this.kind == ClassKind.ENUM_CLASS
-
-internal fun FunctionDescriptor.hasValueTypeAt(index: Int): Boolean {
+internal fun IrFunction.hasValueTypeAt(index: Int): Boolean {
     when (index) {
-        0 -> return !isSuspend && returnType.let { it != null && (it.isValueType() || it.isUnit()) }
-        1 -> return extensionReceiverParameter.let { it != null && it.type.isValueType() }
-        else -> return this.valueParameters[index - 2].type.isValueType()
+        0 -> return !isSuspend && returnType.let { (it.isInlinedNative() || it.isUnit()) }
+        1 -> return dispatchReceiverParameter.let { it != null && it.type.isInlinedNative() }
+        2 -> return extensionReceiverParameter.let { it != null && it.type.isInlinedNative() }
+        else -> return this.valueParameters[index - 3].type.isInlinedNative()
     }
 }
 
-internal fun FunctionDescriptor.hasReferenceAt(index: Int): Boolean {
+internal fun IrFunction.hasReferenceAt(index: Int): Boolean {
     when (index) {
-        0 -> return isSuspend || returnType.let { it != null && !it.isValueType() && !it.isUnit() }
-        1 -> return extensionReceiverParameter.let { it != null && !it.type.isValueType() }
-        else -> return !this.valueParameters[index - 2].type.isValueType()
+        0 -> return isSuspend || returnType.let { !it.isInlinedNative() && !it.isUnit() }
+        1 -> return dispatchReceiverParameter.let { it != null && !it.type.isInlinedNative() }
+        2 -> return extensionReceiverParameter.let { it != null && !it.type.isInlinedNative() }
+        else -> return !this.valueParameters[index - 3].type.isInlinedNative()
     }
 }
 
-private fun FunctionDescriptor.needBridgeToAt(target: FunctionDescriptor, index: Int)
+private fun IrFunction.needBridgeToAt(target: IrFunction, index: Int)
         = hasValueTypeAt(index) xor target.hasValueTypeAt(index)
 
-internal fun FunctionDescriptor.needBridgeTo(target: FunctionDescriptor)
-        = (0..this.valueParameters.size + 1).any { needBridgeToAt(target, it) }
+internal fun IrFunction.needBridgeTo(target: IrFunction)
+        = (0..this.valueParameters.size + 2).any { needBridgeToAt(target, it) }
 
-internal val FunctionDescriptor.target: FunctionDescriptor
-    get() = (if (modality == Modality.ABSTRACT) this else resolveFakeOverride()).original
+internal val IrSimpleFunction.target: IrSimpleFunction
+    get() = (if (modality == Modality.ABSTRACT) this else resolveFakeOverride())
+
+internal val IrFunction.target: IrFunction
+    get() = when (this) {
+    is IrSimpleFunction -> this.target
+    is IrConstructor -> this
+    else -> error(this)
+}
 
 internal enum class BridgeDirection {
     NOT_NEEDED,
@@ -212,7 +141,7 @@ internal enum class BridgeDirection {
     TO_VALUE_TYPE
 }
 
-private fun FunctionDescriptor.bridgeDirectionToAt(target: FunctionDescriptor, index: Int)
+private fun IrFunction.bridgeDirectionToAt(target: IrFunction, index: Int)
        = when {
             hasValueTypeAt(index) && target.hasReferenceAt(index) -> BridgeDirection.FROM_VALUE_TYPE
             hasReferenceAt(index) && target.hasValueTypeAt(index) -> BridgeDirection.TO_VALUE_TYPE
@@ -220,7 +149,7 @@ private fun FunctionDescriptor.bridgeDirectionToAt(target: FunctionDescriptor, i
         }
 
 internal class BridgeDirections(val array: Array<BridgeDirection>) {
-    constructor(parametersCount: Int): this(Array<BridgeDirection>(parametersCount + 2, { BridgeDirection.NOT_NEEDED }))
+    constructor(parametersCount: Int): this(Array<BridgeDirection>(parametersCount + 3, { BridgeDirection.NOT_NEEDED }))
 
     fun allNotNeeded(): Boolean = array.all { it == BridgeDirection.NOT_NEEDED }
 
@@ -251,14 +180,31 @@ internal class BridgeDirections(val array: Array<BridgeDirection>) {
     }
 }
 
-internal fun FunctionDescriptor.bridgeDirectionsTo(overriddenDescriptor: FunctionDescriptor): BridgeDirections {
+val IrSimpleFunction.allOverriddenFunctions: Set<IrSimpleFunction>
+    get() {
+        val result = mutableSetOf<IrSimpleFunction>()
+
+        fun traverse(function: IrSimpleFunction) {
+            if (function in result) return
+            result += function
+            function.overriddenSymbols.forEach { traverse(it.owner) }
+        }
+
+        traverse(this)
+
+        return result
+    }
+
+internal fun IrSimpleFunction.bridgeDirectionsTo(
+        overriddenDescriptor: IrSimpleFunction
+): BridgeDirections {
     val ourDirections = BridgeDirections(this.valueParameters.size)
     for (index in ourDirections.array.indices)
         ourDirections.array[index] = this.bridgeDirectionToAt(overriddenDescriptor, index)
 
     val target = this.target
-    if (!kind.isReal && modality != Modality.ABSTRACT
-            && OverridingUtil.overrides(target, overriddenDescriptor)
+    if (!this.isReal && modality != Modality.ABSTRACT
+            && target.overrides(overriddenDescriptor)
             && ourDirections == target.bridgeDirectionsTo(overriddenDescriptor)) {
         // Bridge is inherited from superclass.
         return BridgeDirections(this.valueParameters.size)
@@ -267,44 +213,55 @@ internal fun FunctionDescriptor.bridgeDirectionsTo(overriddenDescriptor: Functio
     return ourDirections
 }
 
-tailrec internal fun DeclarationDescriptor.findPackage(): PackageFragmentDescriptor {
-    return if (this is PackageFragmentDescriptor) this 
-        else this.containingDeclaration!!.findPackage()
+internal tailrec fun IrDeclaration.findPackage(): IrPackageFragment {
+    val parent = this.parent
+    return parent as? IrPackageFragment
+            ?: (parent as IrDeclaration).findPackage()
 }
 
-internal fun DeclarationDescriptor.allContainingDeclarations(): List<DeclarationDescriptor> {
-    var list = mutableListOf<DeclarationDescriptor>()
-    var current = this.containingDeclaration
-    while (current != null) {
-        list.add(current)
-        current = current.containingDeclaration
-    }
-    return list
+fun IrFunctionSymbol.isComparisonFunction(map: Map<SimpleType, IrSimpleFunctionSymbol>): Boolean =
+        this in map.values
+
+val IrDeclaration.isPropertyAccessor get() =
+    this is IrSimpleFunction && this.correspondingProperty != null
+
+val IrDeclaration.isPropertyField get() =
+    this is IrField && this.correspondingProperty != null
+
+val IrDeclaration.isTopLevelDeclaration get() =
+    parent !is IrDeclaration && !this.isPropertyAccessor && !this.isPropertyField
+
+fun IrDeclaration.findTopLevelDeclaration(): IrDeclaration = when {
+    this.isTopLevelDeclaration ->
+        this
+    this.isPropertyAccessor ->
+        (this as IrSimpleFunction).correspondingProperty!!.findTopLevelDeclaration()
+    this.isPropertyField ->
+        (this as IrField).correspondingProperty!!.findTopLevelDeclaration()
+    else ->
+        (this.parent as IrDeclaration).findTopLevelDeclaration()
 }
 
-internal fun DeclarationDescriptor.getMemberScope(): MemberScope {
-        val containingScope = when (this) {
-            is ClassDescriptor -> this.unsubstitutedMemberScope
-            is PackageViewDescriptor -> this.memberScope
-            else -> error("Unexpected member scope: $containingDeclaration")
-        }
-        return containingScope
+internal val IrClass.isFrozen: Boolean
+    get() = annotations.hasAnnotation(KonanFqNames.frozen) ||
+            // RTTI is used for non-reference type box or Objective-C object wrapper:
+            !this.defaultType.binaryTypeIsReference() || this.isObjCClass()
+
+fun IrConstructorCall.getAnnotationValue() = (getValueArgument(0) as? IrConst<String>)?.value
+
+fun IrConstructorCall.getStringValue(name: String): String {
+    val parameter = symbol.owner.valueParameters.single { it.name.asString() == name }
+    return (getValueArgument(parameter.index) as IrConst<String>).value
 }
 
-// It is possible to declare "external inline fun",
-// but it doesn't have much sense for native,
-// since externals don't have IR bodies.
-// Enforce inlining of constructors annotated with @InlineConstructor.
+fun IrFunction.externalSymbolOrThrow(): String? {
+    annotations.findAnnotation(RuntimeNames.symbolNameAnnotation)?.let { return it.getAnnotationValue() }
 
-private val inlineConstructor = FqName("konan.internal.InlineConstructor")
+    if (annotations.hasAnnotation(KonanFqNames.objCMethod)) return null
 
-internal val FunctionDescriptor.needsInlining: Boolean
-    get() {
-        val inlineConstructor = annotations.hasAnnotation(inlineConstructor)
-        if (inlineConstructor) return true
-        return (this.isInline && !this.isExternal)
-    }
+    if (annotations.hasAnnotation(KonanFqNames.typedIntrinsic)) return null
 
-internal val FunctionDescriptor.needsSerializedIr: Boolean 
-    get() = (this.needsInlining && this.isExported())
+    if (annotations.hasAnnotation(RuntimeNames.cCall)) return null
 
+    throw Error("external function ${this.longName} must have @TypedIntrinsic, @SymbolName or @ObjCMethod annotation")
+}

@@ -1,20 +1,22 @@
-fun foo1(arg: String) : String = arg
-
 /*
-fun foo2(arg: String) : String = arg + " foo2"
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
 
-fun bar(arg1: String, arg2: String) : String  = arg1 + " bar " + arg2
+package runtime.memory.escape0
 
-fun zoo1() : String {
-    var x = foo1("")
-    var y = 4
-    return x
-}
+import kotlin.test.*
 
-fun zoo2() : String {
-    val x = foo1("")
-    var y = 5
-    return x
+//fun foo1(arg: String) : String = foo0(arg)
+fun foo1(arg: Any) : Any = foo0(arg)
+
+fun foo0(arg: Any) : Any = Any()
+
+var global : Any =  Any()
+
+fun foo0_escape(arg: Any) : Any{
+    global = arg
+    return Any()
 }
 
 class Node(var previous: Node?)
@@ -38,10 +40,11 @@ fun zoo4(arg: Int) : Any {
         else -> c
     }
     return a
-} */
+}
 
-fun zoo5(arg: String) : String {
-    return arg + foo1(arg)
+fun zoo5(arg: Any) : Any{
+    foo1(arg)
+    return arg
 }
 
 fun zoo6(arg: Any) : Any {
@@ -52,7 +55,8 @@ fun zoo7(arg1: Any, arg2: Any, selector: Int) : Any {
     return if (selector < 2) arg1 else arg2;
 }
 
-fun main(args : Array<String>) {
-    val z = zoo7(Any(), Any(), 1)
+@Test fun runTest() {
+    //val z = zoo7(Any(), Any(), 1)
+    val x = zoo5(Any())
     //println(bar(foo1(foo2("")), foo2(foo1(""))))
 }

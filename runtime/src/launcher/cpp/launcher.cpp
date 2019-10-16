@@ -29,8 +29,9 @@ OBJ_GETTER(setupArgs, int argc, const char** argv) {
   ObjHeader* result = AllocArrayInstance(theArrayTypeInfo, argc - 1, OBJ_RESULT);
   ArrayHeader* array = result->array();
   for (int index = 1; index < argc; index++) {
-    CreateStringFromCString(
-      argv[index], ArrayAddressOfElementAt(array, index - 1));
+    ObjHolder result;
+    CreateStringFromCString(argv[index], result.slot());
+    UpdateHeapRef(ArrayAddressOfElementAt(array, index - 1), result.obj());
   }
   return result;
 }
@@ -38,23 +39,46 @@ OBJ_GETTER(setupArgs, int argc, const char** argv) {
 //--- main --------------------------------------------------------------------//
 extern "C" KInt Konan_start(const ObjHeader*);
 
-extern "C" int Konan_main(int argc, const char** argv) {
-  RuntimeState* state = InitRuntime();
-
-  if (state == nullptr) {
-    return 2;
-  }
-
-  KInt exitStatus;
-  {
+extern "C" KInt Konan_run_start(int argc, const char** argv) {
     ObjHolder args;
     setupArgs(argc, argv, args.slot());
-    exitStatus = Konan_start(args.obj());
-  }
+    return Konan_start(args.obj());
+}
 
-  DeinitRuntime(state);
+extern "C" RUNTIME_USED int Init_and_run_start(int argc, const char** argv, int memoryDeInit) {
+#ifdef KONAN_NO_CTORS_SECTION
+  extern void _Konan_constructors(void);
+  _Konan_constructors();
+#endif
+
+  Kotlin_initRuntimeIfNeeded();
+
+  KInt exitStatus = Konan_run_start(argc, argv);
+
+  if (memoryDeInit) Kotlin_deinitRuntimeIfNeeded();
 
   return exitStatus;
 }
+
+extern "C" RUNTIME_USED int Konan_main(int argc, const char** argv) {
+    return Init_and_run_start(argc, argv, 1);
+}
+
+#ifdef KONAN_WASM
+// Before we pass control to Konan_main, we need to obtain argv elements
+// from the javascript world.
+extern "C" int Konan_js_arg_size(int index);
+extern "C" int Konan_js_fetch_arg(int index, char* ptr);
+
+extern "C" RUNTIME_USED int Konan_js_main(int argc, int memoryDeInit) {
+    char** argv = (char**)konan::calloc(1, argc);
+    for (int i = 0; i< argc; ++i) {
+        argv[i] = (char*)konan::calloc(1, Konan_js_arg_size(i));
+        Konan_js_fetch_arg(i, argv[i]);
+    }
+    return Init_and_run_start(argc, (const char**)argv, memoryDeInit);
+}
+
+#endif 
 
 #endif

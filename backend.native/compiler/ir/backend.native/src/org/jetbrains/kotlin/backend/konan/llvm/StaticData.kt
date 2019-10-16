@@ -1,17 +1,6 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.backend.konan.llvm
@@ -19,7 +8,6 @@ package org.jetbrains.kotlin.backend.konan.llvm
 import llvm.*
 import org.jetbrains.kotlin.backend.konan.Context
 import org.jetbrains.kotlin.ir.expressions.IrConst
-import org.jetbrains.kotlin.types.KotlinType
 
 /**
  * Provides utilities to create static data.
@@ -65,12 +53,30 @@ internal class StaticData(override val context: Context): ContextUtils {
             }
         }
 
+        val type get() = getGlobalType(this.llvmGlobal)
+
         fun setInitializer(value: ConstValue) {
             LLVMSetInitializer(llvmGlobal, value.llvm)
         }
 
+        fun setZeroInitializer() {
+            LLVMSetInitializer(llvmGlobal, LLVMConstNull(this.type)!!)
+        }
+
         fun setConstant(value: Boolean) {
             LLVMSetGlobalConstant(llvmGlobal, if (value) 1 else 0)
+        }
+
+        fun setLinkage(value: LLVMLinkage) {
+            LLVMSetLinkage(llvmGlobal, value)
+        }
+
+        fun setAlignment(value: Int) {
+            LLVMSetAlignment(llvmGlobal, value)
+        }
+
+        fun setSection(name: String) {
+            LLVMSetSection(llvmGlobal, name)
         }
 
         val pointer = Pointer.to(this)
@@ -144,15 +150,29 @@ internal class StaticData(override val context: Context): ContextUtils {
     /**
      * Creates array-typed global with given name and value.
      */
-    fun placeGlobalArray(name: String, elemType: LLVMTypeRef?, elements: List<ConstValue>): Global {
+    fun placeGlobalArray(name: String, elemType: LLVMTypeRef?, elements: List<ConstValue>, isExported: Boolean = false): Global {
         val initializer = ConstArray(elemType, elements)
-        val global = placeGlobal(name, initializer)
+        val global = placeGlobal(name, initializer, isExported)
 
         return global
     }
 
     private val stringLiterals = mutableMapOf<String, ConstPointer>()
+    private val cStringLiterals = mutableMapOf<String, ConstPointer>()
 
-    fun kotlinStringLiteral(type: KotlinType, value: IrConst<String>) =
-        stringLiterals.getOrPut(value.value) { createKotlinStringLiteral(type, value) }
+    fun cStringLiteral(value: String) =
+            cStringLiterals.getOrPut(value) { placeCStringLiteral(value) }
+
+    fun kotlinStringLiteral(value: String) =
+        stringLiterals.getOrPut(value) { createKotlinStringLiteral(value) }
+}
+
+/**
+ * Creates static instance of `konan.ImmutableByteArray` with given values of elements.
+ *
+ * @param args data for constant creation.
+ */
+internal fun StaticData.createImmutableBlob(value: IrConst<String>): LLVMValueRef {
+    val args = value.value.map { Int8(it.toByte()).llvm }
+    return createConstKotlinArray(context.ir.symbols.immutableBlob.owner, args)
 }

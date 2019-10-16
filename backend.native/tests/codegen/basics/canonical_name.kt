@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.basics.canonical_name
+
+import kotlin.test.*
+
 interface I<U, T> {
   fun foo(a: U): T
   fun qux(a: T): U
@@ -24,10 +33,7 @@ fun <U, V> baz(i: I<U, V>, u: U, v:V) {
 
 //-----------------------------------------------------------------------------//
 
-fun main(args: Array<String>) {
+@Test
+fun runTest() {
   baz<A1, A2>(A(), A1(), A2())
 }
-
-
-
-

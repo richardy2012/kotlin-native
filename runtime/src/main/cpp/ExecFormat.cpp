@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
+
 #include "ExecFormat.h"
+#include "Types.h"
 
 #if USE_ELF_SYMBOLS
 
@@ -29,7 +31,7 @@
 
 #include <vector>
 
-#include "Assert.h"
+#include "KAssert.h"
 
 namespace {
 
@@ -55,7 +57,9 @@ struct SymRecord {
   char* strtab;
 };
 
-std::vector<SymRecord>* symbols = nullptr;
+typedef KStdVector<SymRecord> SymRecordList;
+
+SymRecordList* symbols = nullptr;
 
 // Unfortunately, symbol tables are stored in ELF sections not mapped
 // during regular execution, so we have to map binary ourselves.
@@ -71,7 +75,7 @@ Elf_Ehdr* findElfHeader() {
 
 void initSymbols() {
   RuntimeAssert(symbols == nullptr, "Init twice");
-  symbols = new std::vector<SymRecord>();
+  symbols = konanConstructInstance<SymRecordList>();
   Elf_Ehdr* ehdr = findElfHeader();
   if (ehdr == nullptr) return;
   RuntimeAssert(strncmp((const char*)ehdr->e_ident, ELFMAG, SELFMAG) == 0, "Must be an ELF");
@@ -117,7 +121,7 @@ const char* addressToSymbol(const void* address) {
     while (begin < end) {
       // st_value is load address adjusted.
       if (addressValue >= begin->st_value && addressValue < begin->st_value + begin->st_size) {
-	return &record.strtab[begin->st_name];
+        return &record.strtab[begin->st_name];
       }
       begin++;
     }
@@ -144,7 +148,7 @@ extern "C" bool AddressToSymbol(const void* address, char* resultBuffer, size_t 
 #include <stdlib.h>
 #include <string.h>
 
-#include "Assert.h"
+#include "KAssert.h"
 
 namespace {
 
@@ -152,8 +156,12 @@ static void* mapModuleFile(HMODULE hModule) {
   int bufferLength = 64;
   wchar_t* buffer = nullptr;
   for (;;) {
-    buffer = (wchar_t*)realloc(buffer, sizeof(wchar_t) * bufferLength);
-    RuntimeAssert(buffer != nullptr, "Out of memory");
+    auto newBuffer = (wchar_t*)konanAllocMemory(sizeof(wchar_t) * bufferLength);
+    RuntimeAssert(newBuffer != nullptr, "Out of memory");
+    if (buffer != nullptr) {
+      konanFreeMemory(buffer);
+    }
+    buffer = newBuffer;
 
     DWORD res = GetModuleFileNameW(hModule, buffer, bufferLength);
     if (res != 0 && res < bufferLength) {
@@ -167,7 +175,7 @@ static void* mapModuleFile(HMODULE hModule) {
     }
 
     // Invalid result.
-    free(buffer);
+    konanFreeMemory(buffer);
     return nullptr;
   }
 
@@ -180,7 +188,7 @@ static void* mapModuleFile(HMODULE hModule) {
       /* dwFlagsAndAttributes = */ FILE_ATTRIBUTE_NORMAL,
       /* hTemplateFile = */ nullptr
   );
-  free(buffer);
+  konanFreeMemory(buffer);
   if (hFile == INVALID_HANDLE_VALUE) {
     // Can't open module file.
     return nullptr;
@@ -263,7 +271,6 @@ class SymbolTable {
   }
 
  public:
-
   explicit SymbolTable(HMODULE hModule) {
     imageBase = (char*)hModule;
     IMAGE_DOS_HEADER* dosHeader = (IMAGE_DOS_HEADER*)imageBase;
@@ -308,7 +315,11 @@ extern "C" bool AddressToSymbol(const void* address, char* resultBuffer, size_t 
   if (theExeSymbolTable == nullptr) {
     // Note: do not protecting the lazy initialization by critical sections for simplicity;
     // this doesn't have any serious consequences.
-    theExeSymbolTable = new SymbolTable(GetModuleHandle(nullptr));
+    HMODULE hModule = nullptr;
+    int rv = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+               reinterpret_cast<LPCWSTR>(&AddressToSymbol), &hModule);
+    RuntimeAssert(rv != 0, "GetModuleHandleExW fails");
+    theExeSymbolTable = konanConstructInstance<SymbolTable>(hModule);
   }
   return theExeSymbolTable->functionAddressToSymbol(address, resultBuffer, resultBufferSize);
 }

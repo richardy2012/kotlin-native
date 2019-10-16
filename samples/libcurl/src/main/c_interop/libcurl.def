@@ -1,2 +1,0 @@
-headers = curl/curl.h
-headerFilter = curl/*

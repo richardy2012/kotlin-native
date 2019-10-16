@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package runtime.collections.AbstractMutableCollection
+
+import kotlin.test.*
+
 class TestCollection(): AbstractMutableCollection<Int>() {
     companion object {
         const val SIZE = 7
@@ -48,7 +57,7 @@ fun assertEquals(a: TestCollection, b: List<Int>) {
     }
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     val c = TestCollection()
     if (!c.addAll(listOf(1, 2, 3, 2, 4, 5, 4))) throw AssertionError("addAll is false when it must be true.")
     if (c.addAll(listOf(1, 2)) != false) throw AssertionError("addAll is true when it must be false.")

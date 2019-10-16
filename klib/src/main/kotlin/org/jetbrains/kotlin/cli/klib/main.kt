@@ -1,29 +1,31 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
  */
 
 package org.jetbrains.kotlin.cli.klib
 
+// TODO: Extract `library` package as a shared jar?
+import org.jetbrains.kotlin.config.ApiVersion
+import org.jetbrains.kotlin.config.LanguageVersion
+import org.jetbrains.kotlin.config.LanguageVersionSettingsImpl
+import org.jetbrains.kotlin.descriptors.impl.ModuleDescriptorImpl
+import org.jetbrains.kotlin.descriptors.konan.isKonanStdlib
+import org.jetbrains.kotlin.konan.file.File
+import org.jetbrains.kotlin.library.KLIB_FILE_EXTENSION_WITH_DOT
+import org.jetbrains.kotlin.konan.target.Distribution
+import org.jetbrains.kotlin.konan.target.PlatformManager
+import org.jetbrains.kotlin.konan.util.DependencyProcessor
+import org.jetbrains.kotlin.library.unpackZippedKonanLibraryTo
+import org.jetbrains.kotlin.konan.utils.KonanFactories.DefaultDeserializedDescriptorFactory
+import org.jetbrains.kotlin.util.Logger
+import org.jetbrains.kotlin.library.metadata.KlibMetadataProtoBuf
+import org.jetbrains.kotlin.konan.library.KonanLibrary
+import org.jetbrains.kotlin.konan.library.resolverByName
+import org.jetbrains.kotlin.library.metadata.parseModuleHeader
+import org.jetbrains.kotlin.storage.LockBasedStorageManager
+import java.lang.System.out
 import kotlin.system.exitProcess
-import java.util.Properties
-// TODO: Extract these as a shared jar?
-import org.jetbrains.kotlin.backend.konan.library.impl.LibraryReaderImpl
-import org.jetbrains.kotlin.backend.konan.library.KonanLibrarySearchPathResolver
-import org.jetbrains.kotlin.backend.konan.util.File
-import org.jetbrains.kotlin.backend.konan.util.copyTo
-import org.jetbrains.kotlin.konan.target.TargetManager
 
 fun printUsage() {
     println("Usage: klib <command> <library> <options>")
@@ -70,43 +72,66 @@ fun warn(text: String) {
     println("warning: $text")
 }
 
-fun error(text: String) {
-    println("error: $text")
-    exitProcess(1)
+fun error(text: String): Nothing {
+    kotlin.error("error: $text")
 }
 
-// TODO: Get rid of the hardcoded path.
-val defaultRepository = File(File.userHome, ".konan")
+object KlibToolLogger : Logger {
+    override fun warning(message: String) = org.jetbrains.kotlin.cli.klib.warn(message)
+    override fun error(message: String) = org.jetbrains.kotlin.cli.klib.warn(message)
+    override fun fatal(message: String) = org.jetbrains.kotlin.cli.klib.error(message)
+    override fun log(message: String) = println(message)
+}
+
+val defaultRepository = File(DependencyProcessor.localKonanDir.resolve("klib").absolutePath)
+
+open class ModuleDeserializer(val library: ByteArray) {
+    protected val moduleHeader: KlibMetadataProtoBuf.Header
+        get() = parseModuleHeader(library)
+
+    val moduleName: String
+        get() = moduleHeader.moduleName
+
+    val packageFragmentNameList: List<String>
+        get() = moduleHeader.packageFragmentNameList
+
+}
 
 class Library(val name: String, val requestedRepository: String?, val target: String) {
 
     val repository = requestedRepository?.File() ?: defaultRepository
     fun info() {
         val library = libraryInRepoOrCurrentDir(repository, name)
-        val header = Properties()
-        val manifestFile = library.manifestFile
-        manifestFile.bufferedReader().use { reader ->
-            header.load(reader)
-        }
-        val headerAbiVersion = library.abiVersion
+        val headerAbiVersion = library.versions.abiVersion
+        val headerCompilerVersion = library.versions.compilerVersion
+        val headerLibraryVersion = library.versions.libraryVersion
         val moduleName = ModuleDeserializer(library.moduleHeaderData).moduleName
 
         println("")
-        println("Resolved to: ${library.libDir.absolutePath}")
+        println("Resolved to: ${library.libraryName.File().absolutePath}")
         println("Module name: $moduleName")
         println("ABI version: $headerAbiVersion")
-        val targets = library.targetsDir.listFiles.map{it.name}.joinToString(", ")
-        print("Available targets: $targets\n")
+        println("Compiler version: ${headerCompilerVersion?.toString(true, true)}")
+        println("Library version: $headerLibraryVersion")
+
+        if (library is KonanLibrary) {
+            val targets = library.targetList.joinToString(", ")
+            print("Available targets: $targets\n")
+        }
     }
 
     fun install() {
-        remove(true) 
+        if (!repository.exists) {
+            warn("Repository does not exist: $repository. Creating.")
+            repository.mkdirs()
+        }
 
-        val klibFile = libraryInCurrentDir(name).klibFile
-        val newLocation = File(repository, "klib")
-        newLocation.mkdirs()
-        val newFile = File(newLocation, klibFile.name)
-        klibFile.copyTo(newFile)
+        Library(File(name).name.removeSuffix(KLIB_FILE_EXTENSION_WITH_DOT), requestedRepository, target).remove(true)
+
+        val library = libraryInCurrentDir(name)
+        val newLibDir = File(repository, library.libraryFile.name.removeSuffix(KLIB_FILE_EXTENSION_WITH_DOT))
+
+        library.libraryFile.unpackZippedKonanLibraryTo(newLibDir)
     }
 
     fun remove(blind: Boolean = false) {
@@ -122,54 +147,58 @@ class Library(val name: String, val requestedRepository: String?, val target: St
             null
 
         }
-        library?.libDir?.deleteRecursively()
-        library?.klibFile?.delete()
+        library?.libraryFile?.deleteRecursively()
     }
 
-    fun contents() {
+    fun contents(output: Appendable = out) {
+
+        val storageManager = LockBasedStorageManager("klib")
         val library = libraryInRepoOrCurrentDir(repository, name)
-        val printer = PrettyPrinter(
-            library.moduleHeaderData, {name -> library.packageMetadata(name)})
-        
-        printer.packageFragmentNameList.forEach{ 
-            printer.printPackageFragment(it)
+        val versionSpec = LanguageVersionSettingsImpl(currentLanguageVersion, currentApiVersion)
+        val module = DefaultDeserializedDescriptorFactory.createDescriptorAndNewBuiltIns(library, versionSpec, storageManager, null)
+
+        val defaultModules = mutableListOf<ModuleDescriptorImpl>()
+        if (!module.isKonanStdlib()) {
+            val resolver = resolverByName(
+                    emptyList(),
+                    distributionKlib = Distribution().klib,
+                    skipCurrentDir = true,
+                    logger = KlibToolLogger)
+            resolver.defaultLinks(false, true, true)
+                    .mapTo(defaultModules) {
+                        DefaultDeserializedDescriptorFactory.createDescriptor(
+                                it, versionSpec, storageManager, module.builtIns, null)
+                    }
         }
+
+        (defaultModules + module).let { allModules ->
+            allModules.forEach { it.setDependencies(allModules) }
+        }
+
+        KlibPrinter(output).print(module)
     }
 }
 
-// TODO: need to do something here.
-val currentAbiVersion = 1
+val currentLanguageVersion = LanguageVersion.LATEST_STABLE
+val currentApiVersion = ApiVersion.LATEST_STABLE
 
-val File.konanLibrary 
-    get() = LibraryReaderImpl(this, currentAbiVersion, null)
+fun libraryInRepo(repository: File, name: String) =
+        resolverByName(listOf(repository.absolutePath), skipCurrentDir = true, logger = KlibToolLogger).resolve(name)
 
-fun libraryInRepo(repository: File, name: String): LibraryReaderImpl {
-    val resolver = KonanLibrarySearchPathResolver(listOf(repository.absolutePath), null, null, skipCurrentDir = true)
-    return resolver.resolve(name).konanLibrary
-}
+fun libraryInCurrentDir(name: String) = resolverByName(emptyList(), logger = KlibToolLogger).resolve(name)
 
-fun libraryInCurrentDir(name: String): LibraryReaderImpl {
-    val resolver = KonanLibrarySearchPathResolver(emptyList(), null, null)
-    return resolver.resolve(name).konanLibrary
-}
-
-fun libraryInRepoOrCurrentDir(repository: File, name: String): LibraryReaderImpl {
-    val resolver = KonanLibrarySearchPathResolver(listOf(repository.absolutePath), null, null)
-    return resolver.resolve(name).konanLibrary
-}
-
+fun libraryInRepoOrCurrentDir(repository: File, name: String) =
+        resolverByName(listOf(repository.absolutePath), logger = KlibToolLogger).resolve(name)
 
 fun main(args: Array<String>) {
     val command = Command(args)
 
-    val targetManager = TargetManager(command.options["target"]?.last())
+    val targetManager = PlatformManager().targetManager(command.options["-target"]?.last())
     val target = targetManager.targetName
 
     val repository = command.options["-repository"]?.last()
 
     val library = Library(command.library, repository, target)
-
-    warn("IMPORTANT: the library format is unstable now. It can change with any new git commit without warning!")
 
     when (command.verb) {
         "contents"  -> library.contents()

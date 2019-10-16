@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package runtime.text.chars0
+
+import kotlin.test.*
+
 fun assertTrue(v: Boolean) = if (!v) throw AssertionError() else Unit
 fun assertFalse(v: Boolean) = if (v) throw AssertionError() else Unit
 fun assertEquals(a: Int, b: Int) { if (a != b) throw AssertionError() }
@@ -103,7 +112,7 @@ fun testCategory() {
     } catch (e: IllegalArgumentException) {}
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     testIsSurrogatePair()
     testToChars()
     testToCodePoint()

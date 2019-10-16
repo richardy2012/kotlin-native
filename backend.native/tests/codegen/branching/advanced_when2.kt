@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.branching.advanced_when2
+
+import kotlin.test.*
+
 fun advanced_when2(i: Int): Int {
   var value = 1
   when (i) {
@@ -9,6 +18,6 @@ fun advanced_when2(i: Int): Int {
   return value
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
   if (advanced_when2(10) != 42) throw Error()
 }

@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.bridges.test11
+
+import kotlin.test.*
+
 interface I {
     fun foo(x: Int)
 }
@@ -10,7 +19,7 @@ class B : A<Int>(), I {
     override fun foo(x: Int) = println(x)
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     val b = B()
     val a: A<Int> = b
     val c: I = b

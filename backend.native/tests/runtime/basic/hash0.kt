@@ -1,4 +1,13 @@
-fun main(args : Array<String>) {
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package runtime.basic.hash0
+
+import kotlin.test.*
+
+@Test fun runTest() {
     println(239.hashCode())
     println((-1L).hashCode())
     println('a'.hashCode())
@@ -13,6 +22,5 @@ fun main(args : Array<String>) {
     a[2] = 'l'
     a[3] = 'l'
     a[4] = 'o'
-    // Note that it uses private Konan API.
-    println("Hello".hashCode() == fromCharArray(a, 0, 5).hashCode())
+    println("Hello".hashCode() == String(a, 0, 5).hashCode())
 }

@@ -16,15 +16,26 @@
 
 package org.jetbrains.kotlin.native.interop.gen.jvm
 
-import org.jetbrains.kotlin.native.interop.indexer.NativeLibrary
+import org.jetbrains.kotlin.konan.target.KonanTarget
+import org.jetbrains.kotlin.native.interop.indexer.CompilationWithPCH
 
 /**
  * Describes the native library and the options for adjusting the Kotlin API to be generated for this library.
  */
 class InteropConfiguration(
-        val library: NativeLibrary,
+        val library: CompilationWithPCH,
         val pkgName: String,
         val excludedFunctions: Set<String>,
+        val excludedMacros: Set<String>,
         val strictEnums: Set<String>,
-        val nonStrictEnums: Set<String>
+        val nonStrictEnums: Set<String>,
+        val noStringConversion: Set<String>,
+        val exportForwardDeclarations: List<String>,
+        val disableDesignatedInitializerChecks: Boolean,
+        val target: KonanTarget
 )
+
+enum class KotlinPlatform {
+    JVM,
+    NATIVE
+}

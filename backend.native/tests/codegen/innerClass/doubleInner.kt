@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.innerClass.doubleInner
+
+import kotlin.test.*
+
 open class Father(val param: String) {
     abstract inner class InClass {
         fun work(): String {
@@ -16,6 +25,6 @@ fun box(): String {
     return Father("fail").Child("OK").Child2().work()
 }
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     println(box())
 }

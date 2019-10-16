@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.classDelegation.generic
+
+import kotlin.test.*
+
 open class Content() {
     override fun toString() = "OK"
 }
@@ -16,6 +25,6 @@ class ContentBoxDelegate<T : Content>() : ContentBox<T> by (Impl as ContentBox<T
 
 fun box() = ContentBoxDelegate<Content>().get().toString()
 
-fun main(args: Array<String>) {
+@Test fun runTest() {
     println(box())
 }

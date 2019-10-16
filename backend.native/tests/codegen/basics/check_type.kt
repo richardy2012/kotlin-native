@@ -1,3 +1,12 @@
+/*
+ * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
+ * that can be found in the LICENSE file.
+ */
+
+package codegen.basics.check_type
+
+import kotlin.test.*
+
 interface I
 class A() : I {}
 class B() {}
@@ -28,8 +37,8 @@ fun isTypeOfInterface(a: Any) : Boolean {
 
 //-----------------------------------------------------------------------------//
 
-fun main(args: Array<String>) {
-
+@Test
+fun runTest() {
   println(isTypeOf(A()))
   println(isTypeOf(null))
   println(isTypeNullableOf(A()))

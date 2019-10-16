@@ -38,13 +38,9 @@ while [ $# -gt 0 ]; do
       java_args=("${java_args[@]}" "${1:2}")
       shift
       ;;
-    -X*)
-      echo "TODO: need to pass arguments to all the tools somehow."
-      shift
-      ;;
     --time)
       konan_args=("${konan_args[@]}" --time)
-      java_args=("${java_args[@]}" -agentlib:hprof=cpu=samples -Dkonan.profile=true)
+      java_args=("${java_args[@]}" -Dkonan.profile=true)
       TIMECMD=time
       shift
       ;;
@@ -70,19 +66,19 @@ NATIVE_LIB="${KONAN_HOME}/konan/nativelib"
 
 java_opts=(-ea \
             -Xmx3G \
+            -XX:TieredStopAtLevel=1 \
             "-Djava.library.path=${NATIVE_LIB}" \
             "-Dkonan.home=${KONAN_HOME}" \
-           -Dfile.encoding=UTF-8)
+            -Dfile.encoding=UTF-8 \
+            ${JAVA_OPTS})
 
-KONAN_JAR="${KONAN_HOME}/konan/lib/backend.native.jar"
-KOTLIN_JAR="${KONAN_HOME}/konan/lib/kotlin-compiler.jar"
-STUB_GENERATOR_JAR="${KONAN_HOME}/konan/lib/StubGenerator.jar"
-INTEROP_INDEXER_JAR="${KONAN_HOME}/konan/lib/Indexer.jar"
-INTEROP_JAR="${KONAN_HOME}/konan/lib/Runtime.jar"
-HELPERS_JAR="${KONAN_HOME}/konan/lib/helpers.jar"
-KLIB_JAR="${KONAN_HOME}/konan/lib/klib.jar"
-UTILITIES_JAR="${KONAN_HOME}/konan/lib/utilities.jar"
-KONAN_CLASSPATH="$KOTLIN_JAR:$INTEROP_JAR:$STUB_GENERATOR_JAR:$INTEROP_INDEXER_JAR:$KONAN_JAR:$HELPERS_JAR:$KLIB_JAR:$UTILITIES_JAR"
+# Unset some environment variables which are set by XCode and may potentially affect the tool executed.
+while IFS=$'\r' read -r line || [[ -n "$line" ]]; do
+    unset $line
+done < "${KONAN_HOME}/tools/env_blacklist"
+
+KONAN_JAR="${KONAN_HOME}/konan/lib/kotlin-native.jar"
+KONAN_CLASSPATH="$KONAN_JAR"
 TOOL_CLASS=org.jetbrains.kotlin.cli.utilities.MainKt
 
 LIBCLANG_DISABLE_CRASH_RECOVERY=1 \
